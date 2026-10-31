@@ -823,15 +823,7 @@ export default {
         case "Alt+ArrowUp":
         case "Backspace": {
           event.preventDefault();
-          // get current path and its parent
-          const currentPath = state.req.path || "/";
-          const parentPath = url.removeLastDir(currentPath);
-          if (parentPath === currentPath) {
-            return;
-          }
-          const source = getters.isShare() ? state.shareInfo.hash : state.req.source;
-          const newPath = url.buildItemUrl(source, parentPath);
-          void router.push({ path: newPath });
+          this.goToParentDir();
           break;
         }
 
@@ -1416,9 +1408,23 @@ export default {
     },
     handleDoubleClick(event) {
       if (event.target.closest('.listing-item')) return;
+      // fufu: also ignore the sort header and controls, so fast clicks there don't navigate
+      if (event.target.closest('.listing-item-header, button, input, textarea, select, a')) return;
       if (getters.currentView() !== 'listingView' || getters.currentPromptName()) return;
       if (event.ctrlKey || event.metaKey || event.shiftKey) return; // Don't interfere when pressing any mod key
-      mutations.selectAllItems({ multiple: getters.isMobile() });
+      // fufu: double-click on empty space goes up one folder instead of selecting all
+      this.goToParentDir();
+    },
+    goToParentDir() {
+      // get current path and its parent
+      const currentPath = state.req.path || "/";
+      const parentPath = url.removeLastDir(currentPath);
+      if (parentPath === currentPath) {
+        return;
+      }
+      const source = getters.isShare() ? state.shareInfo.hash : state.req.source;
+      const newPath = url.buildItemUrl(source, parentPath);
+      void router.push({ path: newPath });
     },
   },
 };
