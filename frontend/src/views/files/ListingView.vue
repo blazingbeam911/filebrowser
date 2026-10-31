@@ -225,6 +225,7 @@ export default {
       rectangleStart: { x: 0, y: 0 },
       rectangleEnd: { x: 0, y: 0 },
       rectangleSelection: [],
+      dblClickStart: null, // fufu: where the first click of a double-click landed
       cssVariables: {},
       rafId: null,
       selectionUpdatePending: false,
@@ -499,6 +500,7 @@ export default {
     this.$el.addEventListener('mousedown', this.startRectangleSelection);
     this.$el.addEventListener("touchmove", this.handleTouchMove, { passive: true });
     this.$el.addEventListener('dblclick', this.handleDoubleClick);
+    this.$el.addEventListener('mousedown', this.trackDoubleClickStart);
 
     // Single dragend listener for all items (prevents N listeners for N items)
     document.addEventListener('dragend', this.handleGlobalDragEnd, { passive: true });
@@ -543,6 +545,7 @@ export default {
     document.removeEventListener('dragend', this.handleGlobalDragEnd);
     this.$el.removeEventListener('mousedown', this.startRectangleSelection);
     this.$el.removeEventListener('dblclick', this.handleDoubleClick);
+    this.$el.removeEventListener('mousedown', this.trackDoubleClickStart);
 
     this.$el.removeEventListener("touchmove", this.handleTouchMove);
     this.$el.removeEventListener("contextmenu", this.openContext);
@@ -1412,8 +1415,22 @@ export default {
       if (event.target.closest('.listing-item-header, button, input, textarea, select, a')) return;
       if (getters.currentView() !== 'listingView' || getters.currentPromptName()) return;
       if (event.ctrlKey || event.metaKey || event.shiftKey) return; // Don't interfere when pressing any mod key
+      // fufu: both clicks must have landed on empty space of this same folder
+      const start = this.dblClickStart;
+      this.dblClickStart = null;
+      if (!start?.onEmpty || start.source !== state.req.source || start.path !== state.req.path) return;
       // fufu: double-click on empty space goes up one folder instead of selecting all
       this.goToParentDir();
+    },
+    trackDoubleClickStart(event) {
+      // fufu: in single-click mode the first click on a folder opens it, and the second
+      // click can land on empty space in the new folder; that must not go straight back up
+      if (event.detail > 1) return;
+      this.dblClickStart = {
+        source: state.req.source,
+        path: state.req.path,
+        onEmpty: !event.target.closest('.listing-item'),
+      };
     },
     goToParentDir() {
       // get current path and its parent
