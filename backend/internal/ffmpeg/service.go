@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 
 	goffmpeg "github.com/gtsteffaniak/go-ffmpeg"
 	"github.com/gtsteffaniak/go-ffmpeg/capabilities"
+	"github.com/gtsteffaniak/go-ffmpeg/encode"
+	ffexec "github.com/gtsteffaniak/go-ffmpeg/exec"
 	"github.com/gtsteffaniak/go-ffmpeg/ops"
 	"github.com/gtsteffaniak/go-logger/logger"
 )
@@ -119,6 +122,70 @@ func (s *Service) VideoPreview(ctx context.Context, w io.Writer, opts ops.Previe
 		return fmt.Errorf("ffmpeg service not available")
 	}
 	return s.inner.VideoPreview(ctx, w, opts)
+}
+
+// VideoPreviewKeyframe extracts a JPEG preview frame to w like VideoPreview, but
+// decodes keyframes only (-skip_frame nokey) and uses the keyframe at or before the
+// seek point (-noaccurate_seek) instead of decoding up to the exact frame. This is much
+// faster for high-resolution video with long or open GOPs (common with HEVC), where
+// exact seeking can exceed the preview timeout. Otherwise it builds the same command as
+// go-ffmpeg's ops.VideoPreviewFrame (scale filter, quality, protocol whitelist) and
+// holds one decode slot while ffmpeg runs.
+//
+// It can succeed with empty output, e.g. when the seek point lies after the last
+// keyframe; callers should then fall back to VideoPreview.
+func (s *Service) VideoPreviewKeyframe(ctx context.Context, w io.Writer, opts ops.PreviewOptions) error {
+	if s == nil || s.inner == nil {
+		return fmt.Errorf("ffmpeg service not available")
+	}
+
+	dur := opts.DurationSec
+	if dur <= 0 {
+		var err error
+		dur, err = s.GetMediaDuration(ctx, opts.Input)
+		if err != nil {
+			return err
+		}
+	}
+	seekSec := ops.ResolvePreviewSeekSec(dur, opts)
+
+	args := []string{"-hide_banner", "-nostats", "-nostdin",
+		"-skip_frame", "nokey", "-noaccurate_seek",
+		"-ss", fmt.Sprintf("%.3f", seekSec),
+		"-protocol_whitelist", ffexec.DefaultProtocolWhitelist,
+		"-i", opts.Input,
+	}
+	if opts.Width > 0 && opts.Height > 0 {
+		args = append(args, "-vf", ops.PreviewScaleFilter(opts.Width, opts.Height, opts.ScaleMode))
+	}
+	q := opts.Quality
+	if q == 0 {
+		q = 10
+	}
+	args = append(args,
+		"-frames:v", "1",
+		"-q:v", encode.QualityToQScale(q),
+		"-vcodec", "mjpeg",
+		"-f", "image2",
+		"-",
+	)
+
+	if err := s.inner.Acquire(ctx); err != nil {
+		return err
+	}
+	defer s.inner.Release()
+
+	cmd := exec.CommandContext(ctx, s.inner.FFmpegPath(), args...)
+	cmd.Stdout = w
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("keyframe preview failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
 }
 
 // ExtractSubtitle returns embedded subtitle content as WebVTT.

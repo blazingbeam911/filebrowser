@@ -32,15 +32,27 @@ func (s *Service) GenerateVideoPreview(ctx context.Context, videoPath, previewSi
 		return nil, err
 	}
 
-	var buf bytes.Buffer
-	err = s.ffmpegService.VideoPreview(ctx, &buf, ops.PreviewOptions{
+	opts := ops.PreviewOptions{
 		Input:       videoPath,
 		SeekPercent: float64(percentageSeek),
 		Width:       params.width,
 		Height:      params.height,
 		ScaleMode:   params.scaleMode,
 		Quality:     params.quality,
-	})
+	}
+
+	// fufu: try a keyframe-only preview first (see VideoPreviewKeyframe); fall back to
+	// the exact frame if it fails or yields nothing (e.g. seek point after the last keyframe).
+	var buf bytes.Buffer
+	err = s.ffmpegService.VideoPreviewKeyframe(ctx, &buf, opts)
+	if err != nil || buf.Len() == 0 {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		logger.Debugf("Keyframe preview for '%s' failed or was empty, using exact frame: %v", videoPath, err)
+		buf.Reset()
+		err = s.ffmpegService.VideoPreview(ctx, &buf, opts)
+	}
 	if err != nil {
 		return nil, err
 	}
