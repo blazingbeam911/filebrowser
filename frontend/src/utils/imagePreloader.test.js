@@ -188,6 +188,7 @@ describe('preloading at runtime', () => {
   }, IMPORT_HOOK_TIMEOUT_MS);
 
   afterEach(() => {
+    preloader.setPreloadHold(false);
     preloader.clearImagePreloads();
     vi.unstubAllGlobals();
   });
@@ -227,6 +228,34 @@ describe('preloading at runtime', () => {
 
     preloader.resumeImagePreloads();
     expect(FakeImage.instances).toHaveLength(2);
+  });
+
+  it('starts no new loads during a fast hold, lets a running one finish, continues after', async () => {
+    refresh(3);
+    preloader.resumeImagePreloads();
+    preloader.setPreloadHold(true);
+    expect(FakeImage.instances).toHaveLength(1);
+    FakeImage.instances[0].finishDecode();
+    await flush();
+    expect(preloader.isImagePreloaded('url:/album/img4.jpg')).toBe(true);
+    expect(FakeImage.instances).toHaveLength(1);
+
+    preloader.setPreloadHold(false);
+    expect(FakeImage.instances).toHaveLength(2);
+  });
+
+  it('a fast hold and the viewer pause are independent', () => {
+    refresh(3);
+    preloader.setPreloadHold(true);
+    preloader.resumeImagePreloads();
+    expect(FakeImage.instances).toHaveLength(0);
+
+    preloader.pauseImagePreloads('url:/album/img3.jpg');
+    preloader.setPreloadHold(false);
+    expect(FakeImage.instances).toHaveLength(0);
+
+    preloader.resumeImagePreloads();
+    expect(FakeImage.instances).toHaveLength(1);
   });
 
   it('keeps images still in the window and releases the rest when moving on', async () => {

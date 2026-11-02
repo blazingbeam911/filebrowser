@@ -14,7 +14,8 @@ import { joinPath } from "@/utils/url.js";
  *   documents), TIFF (decoded to a canvas by the viewer) and files over `preloadMaxMB` are
  *   skipped.
  * - When: one at a time, nearest first, and only while the viewer isn't loading its own
- *   image (the viewer pauses and resumes the preloader).
+ *   image (the viewer pauses and resumes the preloader), and not during a fast hold
+ *   (utils/imageHold.js), which wants the bandwidth for thumbnails.
  * - Memory: images that leave the window are released (and their download aborted).
  */
 
@@ -86,6 +87,8 @@ const entries = new Map();
 let queue = [];
 let loadingUrl = null;
 let paused = true;
+/** A fast hold is in progress (utils/imageHold.js): no new preloads until it ends. */
+let held = false;
 /** The viewer's own image URL; never aborted, since the viewer may share its download. */
 let viewerUrl = null;
 /** The last image the viewer finished showing. */
@@ -128,7 +131,7 @@ function release(url) {
 }
 
 function pump() {
-  if (paused || loadingUrl !== null) return;
+  if (paused || held || loadingUrl !== null) return;
   const url = queue.shift();
   if (url === undefined) return;
   const img = new Image();
@@ -213,6 +216,15 @@ export function resumeImagePreloads() {
   clearViewerWait();
   viewerShownUrl = viewerUrl;
   paused = false;
+  pump();
+}
+
+/**
+ * Fast hold on/off (utils/imageHold.js). Independent of the viewer's pause: preloading
+ * continues only once both allow it. A preload already downloading is left to finish.
+ */
+export function setPreloadHold(value) {
+  held = Boolean(value);
   pump();
 }
 

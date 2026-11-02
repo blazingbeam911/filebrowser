@@ -66,3 +66,26 @@ export function previewRawUrl(item) {
   }
   return resourcesApi.getViewURL(item.source, item.path, viewToken, share, false, typeHint);
 }
+
+/**
+ * URL of the server's large (640 px) thumbnail of `item`, built exactly as the listing builds
+ * it (ListingItem.vue thumbnailUrl + Icon.vue "&size=large"), so a thumbnail the listing has
+ * already loaded is reused. Null when thumbnails are off or the file has none.
+ * @param {{ source?: string, path: string, modified?: string, hasPreview?: boolean }} item
+ * @returns {string|null}
+ */
+export function largeThumbnailUrl(item) {
+  if (!item?.path || !item.hasPreview || !globalVars.enableThumbs || !getters.previewPerms()?.image) {
+    return null;
+  }
+  if (getters.isShare()) {
+    if (state.shareInfo?.disableThumbnails) {
+      return null;
+    }
+    return `${resourcesApi.getPreviewURLPublic(item.path)}&size=large`;
+  }
+  if (!item.source) {
+    return null;
+  }
+  return `${resourcesApi.getPreviewURL(item.source, item.path, item.modified)}&size=large`;
+}

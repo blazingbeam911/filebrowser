@@ -107,12 +107,27 @@ import { previewViews } from "@/utils/constants";
 import { url } from "@/utils";
 import { resourcesApi } from "@/api";
 import { navigatePlaybackQueue } from "@/utils/playbackQueue.js";
+import { endHold, holdMayMove, imageHold, setHoldFast, startHold } from "@/utils/imageHold.js";
+import { getTypeInfo } from "@/utils/mimetype";
+import { navigationConfig } from "@/utils/navigationConfig.js";
+import { previewRawUrl } from "@/utils/previewRawUrl.js";
 import {
   isInLeftNavHoverZone,
   isInLeftNavTapZone,
   isInRightNavHoverZone,
   isInRightNavTapZone,
 } from "@/utils/navigationEdgeZones.js";
+
+function isArrowKey(key) {
+  return key === "ArrowRight" || key === "ArrowLeft";
+}
+
+/** True for an image file the viewer may show (holding an arrow cycles only through these). */
+function isImageFile(req) {
+  if (!req?.type || req.type === "directory") return false;
+  if (getters.fileViewingDisabled(req.name ?? "")) return false;
+  return getTypeInfo(req.type).simpleType === "image";
+}
 
 export default {
   name: "NextPrevious",
@@ -150,6 +165,9 @@ export default {
     };
   },
   computed: {
+    sameCategoryOnly() {
+      return navigationConfig.sameCategory;
+    },
     navigationSortOverride() {
       return state.navigation.sorting;
     },
@@ -318,6 +336,12 @@ export default {
         void this.setupNavigationForCurrentItem();
       }
     },
+    // "Same type only" (⋮ menu) switched: recompute previous/next at once.
+    sameCategoryOnly() {
+      if (this.enabled && state.req) {
+        void this.setupNavigationForCurrentItem();
+      }
+    },
     // Watch for when navigation links are set up
     'state.navigation.previousLink'() {
       this.showInitialNavigation();
@@ -332,6 +356,10 @@ export default {
   },
   async mounted() {
     window.addEventListener("keydown", this.keyEvent);
+    // Capture phase, ahead of every other key handler (the video player's included).
+    window.addEventListener("keydown", this.holdGuard, true);
+    window.addEventListener("keyup", this.keyUp);
+    window.addEventListener("blur", endHold);
     window.addEventListener("mousemove", this.handleDrag);
     window.addEventListener("mouseup", this.endDrag);
     window.addEventListener("touchmove", this.handleDrag, { passive: false });
@@ -358,6 +386,10 @@ export default {
   },
   beforeUnmount() {
     window.removeEventListener("keydown", this.keyEvent);
+    window.removeEventListener("keydown", this.holdGuard, true);
+    window.removeEventListener("keyup", this.keyUp);
+    window.removeEventListener("blur", endHold);
+    endHold();
     window.removeEventListener("mousemove", this.handleDrag);
     window.removeEventListener("mouseup", this.endDrag);
     window.removeEventListener("touchmove", this.handleDrag);
@@ -581,6 +613,11 @@ export default {
         return;
       }
 
+      if (event.repeat && isArrowKey(event.key)) {
+        this.handleHeldArrow(event);
+        return;
+      }
+
       // If we're in plyr, only handle arrow keys if Ctrl is pressed
       if (this.isMediaFile && !event.ctrlKey || event.repeat) {
         return;
@@ -606,6 +643,47 @@ export default {
             void this.prev();
           }
           break;
+      }
+    },
+    /**
+     * An auto-repeated ← / → (the key is held). On an image, moves on once the current image
+     * is on screen: in full, or with Shift held as its thumbnail (utils/imageHold.js).
+     * Repeats that come too early are dropped, so no image is skipped. On anything else,
+     * repeats are ignored as before.
+     */
+    handleHeldArrow(event) {
+      if (!isImageFile(state.req) || this.currentView === 'editor' || this.isMediaQueueMode) {
+        return;
+      }
+      event.preventDefault();
+      startHold(event.shiftKey);
+      if (state.navigation.isTransitioning || !holdMayMove(previewRawUrl(state.req))) {
+        return;
+      }
+      if (event.key === "ArrowRight" && this.hasNext) {
+        void this.next();
+      } else if (event.key === "ArrowLeft" && this.hasPrevious) {
+        void this.prev();
+      }
+    },
+    /**
+     * Capture-phase keydown: a hold that has reached a file that isn't an image ends there.
+     * The rest of it is swallowed, so a held → landing on a video doesn't make the player
+     * seek. Released and pressed again, the arrows work as usual on that file.
+     */
+    holdGuard(event) {
+      if (!event.repeat || !imageHold.active || !isArrowKey(event.key) || isImageFile(state.req)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    },
+    keyUp(event) {
+      if (isArrowKey(event.key)) {
+        endHold();
+      } else if (event.key === "Shift") {
+        // Arrow still held: the hold carries on, waiting for full images again.
+        setHoldFast(false);
       }
     },
     handleClick() {

@@ -11,8 +11,9 @@
       aria-hidden="true"
     />
 
-    <!-- Loading spinner overlay (fades in only if loading takes a moment) -->
-    <div v-if="!fullImageLoaded" class="image-loading-overlay">
+    <!-- Loading spinner overlay (fades in only if loading takes a moment; not over the
+         thumbnails a fast hold moves through) -->
+    <div v-if="!fullImageLoaded && !(holdFast && placeholderSrc)" class="image-loading-overlay">
       <LoadingSpinner size="medium" />
     </div>
 
@@ -42,15 +43,20 @@ import { notify } from "@/notify";
 import { getters, mutations, state } from '@/store';
 import { globalVars } from "@/utils/constants";
 import { getBestCachedImage } from "@/utils/imageCache";
+import { imageHold, reportShown } from "@/utils/imageHold.js";
 import { isImagePreloaded, pauseImagePreloads, resumeImagePreloads } from "@/utils/imagePreloader.js";
-import { isRawImageMimeType } from "@/utils/mimetype";
+import { getTypeInfo, isRawImageMimeType } from "@/utils/mimetype";
+import { largeThumbnailUrl } from "@/utils/previewRawUrl.js";
 import { refreshViewToken, requestViewIdentity } from "@/api/viewToken.js";
 import throttle from "@/utils/throttle";
 
 /** How long the previous image stays up before the next one's thumbnail replaces it. */
 const PLACEHOLDER_DELAY_MS = 150;
 
-/** Downloads and decodes `url` off-screen; resolves either way (errors surface on the <img>). */
+/**
+ * Downloads and decodes `url` off-screen. Resolves either way, to whether it worked (for the
+ * full image, errors surface on the visible <img> through onImageError).
+ */
 async function decodeOffscreen(url) {
   const img = new Image();
   img.decoding = "async";
@@ -58,14 +64,14 @@ async function decodeOffscreen(url) {
   try {
     if (typeof img.decode === "function") {
       await img.decode();
-    } else {
-      await new Promise((resolve) => {
-        img.onload = resolve;
-        img.onerror = resolve;
-      });
+      return true;
     }
+    return await new Promise((resolve) => {
+      img.onload = () => resolve(true);
+      img.onerror = () => resolve(false);
+    });
   } catch (_e) {
-    // Load or decode failed: the visible <img> reports it through onImageError.
+    return false;
   }
 }
 
@@ -101,6 +107,8 @@ export default {
       loadGeneration: 0,
       /** Zoom/pan reset waits until the new image (or its placeholder) is on screen. */
       viewResetPending: false,
+      /** { generation, src } of a full image not downloaded yet because of a fast hold. */
+      deferredFull: null,
       loadTimeout: null,
       position: {
         center: { x: 0, y: 0 },
@@ -170,6 +178,17 @@ export default {
       const source = getters.isShare() ? state.shareInfo?.hash : this.source;
       return getBestCachedImage(source, this.path, state.req?.modified);
     },
+    /** A fast hold (Shift + held arrow) is moving through images: thumbnails are enough. */
+    holdFast() {
+      return imageHold.fast;
+    },
+    /** Large thumbnail shown during a fast hold; only for images (not converted documents). */
+    holdThumbnailUrl() {
+      if (!state?.req || getTypeInfo(state.req.type).simpleType !== "image") {
+        return null;
+      }
+      return largeThumbnailUrl(state.req);
+    },
     navigationGestureAllowed() {
       return state.navigation.enabled && getters.currentPrompt() === null;
     },
@@ -234,6 +253,7 @@ export default {
   },
   beforeUnmount() {
     this.loadGeneration++;
+    this.deferredFull = null;
     this.clearPlaceholderTimer();
     pauseImagePreloads();
     // A load still in flight never reaches onLoad now: clear its global loading flag, or
@@ -302,6 +322,8 @@ export default {
       mutations.setLoading("preview-img", true);
       const generation = ++this.loadGeneration;
       this.clearPlaceholderTimer();
+      this.deferredFull = null;
+      reportShown(this.src, "none");
 
       // Set src directly via JavaScript to avoid Vue's HTML entity encoding in template bindings
       // Vue HTML-encodes & to &amp; when using :src="src" in templates
@@ -309,6 +331,14 @@ export default {
       const cleanSrc = String(this.src).replace(/&amp;/g, '&');
       // No new preloads compete with this image; resumed in onLoad / finishImageError.
       pauseImagePreloads(cleanSrc);
+
+      if (imageHold.fast && this.holdThumbnailUrl && !isImagePreloaded(cleanSrc)) {
+        // Fast hold: show the large thumbnail straight away and leave the full image until
+        // the hold ends (or the thumbnail fails), so passing images costs no full downloads.
+        this.deferredFull = { generation, src: cleanSrc };
+        void this.showHoldThumbnail(generation);
+        return;
+      }
 
       const imgex = this.$refs.imgex;
       const somethingOnScreen = Boolean(imgex?.getAttribute?.('src')) || this.placeholderSrc !== null;
@@ -333,6 +363,9 @@ export default {
         return;
       }
 
+      await this.fetchAndShowFull(cleanSrc, generation);
+    },
+    async fetchAndShowFull(cleanSrc, generation) {
       // Download and decode off-screen, then hand the URL to the visible <img>: the browser
       // reuses the decoded image, so it paints in one go and onLoad follows. A preloaded
       // image is already downloaded and decoded; decoding it again could only wait behind
@@ -343,6 +376,34 @@ export default {
       await this.$nextTick();
       if (generation !== this.loadGeneration) return;
       this.showFullImage(cleanSrc);
+    },
+    /** Starts the full image a fast hold left waiting (hold ended, or thumbnail failed). */
+    startDeferredFull() {
+      const deferred = this.deferredFull;
+      this.deferredFull = null;
+      if (!deferred || deferred.generation !== this.loadGeneration) return;
+      void this.fetchAndShowFull(deferred.src, deferred.generation);
+    },
+    /**
+     * Fast hold: shows the large thumbnail at once and reports it, so the hold can move on.
+     * If it fails (e.g. a format the browser can't show), the full image is loaded instead
+     * and the hold waits for that.
+     */
+    async showHoldThumbnail(generation) {
+      const src = this.src;
+      const thumbnail = this.holdThumbnailUrl;
+      const ok = thumbnail ? await decodeOffscreen(thumbnail) : false;
+      if (generation !== this.loadGeneration || this.fullImageLoaded) return;
+      if (!ok) {
+        this.startDeferredFull();
+        return;
+      }
+      this.clearPlaceholderTimer();
+      this.placeholderSrc = thumbnail;
+      this.applyPendingViewReset();
+      await this.$nextTick();
+      if (generation !== this.loadGeneration || this.fullImageLoaded) return;
+      reportShown(src, "thumbnail");
     },
     /** Puts `url` in the visible <img>; onLoad / onImageError follow. */
     showFullImage(url) {
@@ -357,10 +418,12 @@ export default {
       img.src = url;
     },
     async showPlaceholder(thumbnail, generation) {
+      const src = this.src;
       await decodeOffscreen(thumbnail);
       if (generation !== this.loadGeneration || this.fullImageLoaded) return;
       this.placeholderSrc = thumbnail;
       this.applyPendingViewReset();
+      reportShown(src, "thumbnail");
     },
     clearPlaceholderTimer() {
       if (this.placeholderTimer) {
@@ -390,6 +453,7 @@ export default {
         this.loadTimeout = null;
       }
       mutations.setLoading("preview-img", false);
+      reportShown(this.src, "full");
       // fullImageLoaded flips display from none → block via :style. Vue hasn't
       // updated the DOM yet, so setCenter() in the same tick sees clientWidth/Height 0.
       // Defer until after layout so centering / transform apply correctly.
@@ -413,8 +477,15 @@ export default {
         const viewIdentity = requestViewIdentity(state.req);
         void refreshViewToken(state.req.source, state.req.viewToken)
           .then((data) => {
-            if (requestViewIdentity(state.req) === viewIdentity) {
+            if (requestViewIdentity(state.req) !== viewIdentity) return;
+            if (data?.viewToken && data.viewToken !== state.req.viewToken) {
+              // New token, new URL: the src watcher loads the image again.
               mutations.setRequestViewToken(data.viewToken);
+            } else {
+              // Same token (tokens are reused per scope): the URL doesn't change and nothing
+              // would retry, so the image itself is broken. Without this the spinner stayed
+              // up for good (and a held arrow would wait on it forever).
+              this.finishImageError(img);
             }
           })
           .catch(() => {
@@ -433,6 +504,8 @@ export default {
       this.imageLoaded = true;
       this.fullImageLoaded = true;
       mutations.setLoading("preview-img", false);
+      // Failed counts as done for a held arrow: it moves on instead of getting stuck.
+      reportShown(this.src, "full");
       if (img) {
         img.style.display = 'block';
       }
@@ -952,6 +1025,18 @@ export default {
     },
   },
   watch: {
+    holdFast(fast) {
+      if (!fast) {
+        // Fast hold over: the image it stopped on loads in full.
+        this.startDeferredFull();
+        return;
+      }
+      // A fast hold began while this image is still loading in full with nothing of it on
+      // screen yet: show its thumbnail too, so the hold needn't wait for the full image.
+      if (!this.fullImageLoaded && this.placeholderSrc === null && this.holdThumbnailUrl) {
+        void this.showHoldThumbnail(this.loadGeneration);
+      }
+    },
     src: async function (newSrc) {
       if (!newSrc) {
         mutations.setLoading("preview-img", false);
@@ -989,7 +1074,7 @@ export default {
         this.loadFullImage();
         // Set a timeout to handle cases where image never loads
         this.loadTimeout = setTimeout(() => {
-          if (!this.fullImageLoaded && !this.imageLoaded) {
+          if (!this.fullImageLoaded && !this.imageLoaded && !this.deferredFull) {
             // Show the image even if load event didn't fire (might be partially loaded)
             this.fullImageLoaded = true;
             this.imageLoaded = true;

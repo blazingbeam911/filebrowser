@@ -226,6 +226,7 @@
       <action v-if="isPreview && permissions.modify" icon="edit" :label="$t('general.rename')" @action="showRenamePromptForPreview" />
       <action v-if="showWatch" icon="visibility" :label="$t('buttons.watchFile')" @action="watchFile()" />
       <action v-if="showImageViewerSettings" icon="tune" :label="$t('imageViewer.settings')" @action="showImageViewerSettingsPrompt" />
+      <action v-if="isPreview" :icon="sameCategoryOnly ? 'check_box' : 'check_box_outline_blank'" :label="$t('viewerNavigation.sameCategoryOnly')" @action="toggleSameCategoryOnly" />
       <action v-if="hasDownload" icon="file_download" :label="$t('general.download')" @action="startDownload" />
       <action v-if="showSendToAppInPreview" icon="ios_share" :label="$t('buttons.sendToApp')" @action="sendToAppFromPreview" />
       <action v-if="showUnarchiveInOverflow" icon="folder_open" :label="$t('prompts.unarchive')" @action="showUnarchivePromptFromPreview" />
@@ -253,6 +254,7 @@ import { canNativeShare, nativeShareFile } from "@/utils/nativeShare";
 import { isRichTextPreviewMimeType, getTypeInfo, getTypeInfoFromExt } from "@/utils/mimetype";
 import { isMediaRequest } from "@/utils/mediaFile";
 import { expandBeforeEnter, expandEnter, expandLeave } from "@/utils/expandTransition";
+import { navigationConfig, setSameCategoryOnly } from "@/utils/navigationConfig.js";
 
 function isArchivePath(pathOrName) {
   if (!pathOrName || typeof pathOrName !== "string") return false;
@@ -555,6 +557,10 @@ export default {
     isPreview() {
       return getters.isPreviewView();
     },
+    /** Per-device switch: previous / next only reach files of the open file's category. */
+    sameCategoryOnly() {
+      return navigationConfig.sameCategory;
+    },
     /** Per-device image viewer settings (preloading), offered while viewing an image. */
     showImageViewerSettings() {
       if (!this.isPreview || !state.req || getters.fileViewingDisabled(state.req.name)) {
@@ -668,6 +674,10 @@ export default {
     }
   },
   methods: {
+    /** Stays open, so the checkbox visibly flips. */
+    toggleSameCategoryOnly() {
+      setSameCategoryOnly(!navigationConfig.sameCategory);
+    },
     showImageViewerSettingsPrompt() {
       mutations.closeHovers();
       mutations.showPrompt({ name: "ImageViewerSettings" });

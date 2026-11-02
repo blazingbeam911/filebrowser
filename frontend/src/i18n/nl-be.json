@@ -960,6 +960,9 @@
     "preloadMaxMBDescription": "Larger files are not preloaded. They still load normally when you open them.",
     "resetDefaults": "Reset defaults"
   },
+  "viewerNavigation": {
+    "sameCategoryOnly": "Same type only"
+  },
   "fileSizeAnalyzer": {
     "title": "Bestandsgrootte analyzer",
     "largerThan": "Groter dan (MB)",

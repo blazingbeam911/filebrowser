@@ -11,6 +11,7 @@ import { detectLocale, setLocale } from "@/i18n/index.ts";
 import { notify } from "@/notify/index.ts";
 import { url } from "@/utils/index.ts";
 import { clearImagePreloads, refreshImagePreloads } from "@/utils/imagePreloader.js";
+import { sameCategoryFilter } from "@/utils/navigationConfig.js";
 import { getObjectProperty, setObjectProperty, omitObjectProperty } from '@/utils/object.js';
 import { sortedItems } from "@/utils/sort.ts";
 import { isSourceSidebarCategory } from "@/utils/sidebarCategory.ts";
@@ -1179,9 +1180,12 @@ export const mutations = {
       return;
     }
 
+    // With "only move between files of this type" on, skip other categories too.
+    const sameCategory = sameCategoryFilter(currentItem.type);
+
     // Find previous item (skip directories)
     for (const item of items.slice(0, state.navigation.currentIndex).reverse()) {
-      if (item.type === 'directory') continue;
+      if (item.type === 'directory' || !sameCategory(item)) continue;
 
       item.path = url.joinPath(directoryPath, item.name);
       state.navigation.previousItem = item;
@@ -1191,7 +1195,7 @@ export const mutations = {
 
     // Find next item (skip directories)
     for (const item of items.slice(state.navigation.currentIndex + 1)) {
-      if (item.type === 'directory') continue;
+      if (item.type === 'directory' || !sameCategory(item)) continue;
 
       item.path = url.joinPath(directoryPath, item.name);
       state.navigation.nextItem = item;

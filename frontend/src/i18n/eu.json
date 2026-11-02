@@ -1000,6 +1000,9 @@
     "preloadMaxMBDescription": "Larger files are not preloaded. They still load normally when you open them.",
     "resetDefaults": "Reset defaults"
   },
+  "viewerNavigation": {
+    "sameCategoryOnly": "Same type only"
+  },
   "fileSizeAnalyzer": {
     "title": "Fitxategi-tamainen analizatzailea",
     "largerThan": "Hau baino handiagoa (MB)",
