@@ -110,6 +110,7 @@ import Access from "./Access.vue";
 import Password from "./Password.vue";
 import PlaybackQueue from "./PlaybackQueue.vue";
 import VisualizerSettings from "./VisualizerSettings.vue";
+import ImageViewerSettings from "./ImageViewerSettings.vue";
 import EditorSettings from "./EditorSettings.vue";
 import SharePicker from "./SharePicker.vue";
 import PathPicker from "./PathPicker.vue";
@@ -169,6 +170,7 @@ export default {
     Password,
     PlaybackQueue,
     VisualizerSettings,
+    ImageViewerSettings,
     EditorSettings,
     PathPicker,
     EntityPicker,
@@ -420,6 +422,8 @@ export default {
           return this.$t("player.QueuePlayback");
         case "visualizersettings":
           return this.$t("player.visualizer.settings");
+        case "imageviewersettings":
+          return this.$t("imageViewer.settings");
         case "editorsettings":
           return this.$t("editor.settings.title");
         case "pathpicker":

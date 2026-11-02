@@ -225,6 +225,7 @@
       <action v-if="shouldShowParentFolder()" icon="folder" :label="$t('buttons.openParentFolder')" @action="openParentFolder" />
       <action v-if="isPreview && permissions.modify" icon="edit" :label="$t('general.rename')" @action="showRenamePromptForPreview" />
       <action v-if="showWatch" icon="visibility" :label="$t('buttons.watchFile')" @action="watchFile()" />
+      <action v-if="showImageViewerSettings" icon="tune" :label="$t('imageViewer.settings')" @action="showImageViewerSettingsPrompt" />
       <action v-if="hasDownload" icon="file_download" :label="$t('general.download')" @action="startDownload" />
       <action v-if="showSendToAppInPreview" icon="ios_share" :label="$t('buttons.sendToApp')" @action="sendToAppFromPreview" />
       <action v-if="showUnarchiveInOverflow" icon="folder_open" :label="$t('prompts.unarchive')" @action="showUnarchivePromptFromPreview" />
@@ -249,7 +250,7 @@ import { copyToClipboard } from "@/utils/clipboard";
 import { globalVars } from "@/utils/constants.js";
 import downloadFiles from "@/utils/download";
 import { canNativeShare, nativeShareFile } from "@/utils/nativeShare";
-import { isRichTextPreviewMimeType, getTypeInfoFromExt } from "@/utils/mimetype";
+import { isRichTextPreviewMimeType, getTypeInfo, getTypeInfoFromExt } from "@/utils/mimetype";
 import { isMediaRequest } from "@/utils/mediaFile";
 import { expandBeforeEnter, expandEnter, expandLeave } from "@/utils/expandTransition";
 
@@ -554,6 +555,13 @@ export default {
     isPreview() {
       return getters.isPreviewView();
     },
+    /** Per-device image viewer settings (preloading), offered while viewing an image. */
+    showImageViewerSettings() {
+      if (!this.isPreview || !state.req || getters.fileViewingDisabled(state.req.name)) {
+        return false;
+      }
+      return getTypeInfo(state.req.type).simpleType === "image";
+    },
     showEditButton() {
       if (getters.isSplitViewActive()) return false;
       if (getters.currentView() === "editor") return false;
@@ -660,6 +668,10 @@ export default {
     }
   },
   methods: {
+    showImageViewerSettingsPrompt() {
+      mutations.closeHovers();
+      mutations.showPrompt({ name: "ImageViewerSettings" });
+    },
     showInfoPrompt() {
       mutations.closeHovers();
       mutations.showPrompt({

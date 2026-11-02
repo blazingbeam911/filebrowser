@@ -1,15 +1,17 @@
 <template>
   <div id="previewer">
-    <!-- Loading overlay during navigation transition -->
-    <div v-if="isTransitioning" class="transition-loading">
+    <!-- Loading overlay during navigation transition. Between images it stays transparent
+         and appears only if loading takes a moment: the current image stays on screen until
+         the next one is ready (see ExtendedImage). -->
+    <div v-if="isTransitioning" class="transition-loading" :class="{ 'over-image': showImage }">
       <LoadingSpinner size="medium" />
     </div>
     <div class="preview" :class="{
       'plyr-background-light': !isDarkMode && previewType === 'audio',
       'plyr-background-dark': isDarkMode && previewType === 'audio',
-      'transitioning': isTransitioning
+      'transitioning': isTransitioning && !showImage
     }" v-if="!isDeleted">
-      <ExtendedImage v-if="showImage && !isTransitioning" :src="raw" @navigate-previous="navigatePrevious"
+      <ExtendedImage v-if="showImage" :src="raw" @navigate-previous="navigatePrevious"
         @navigate-next="navigateNext" @close-preview="exitPreviewFromImageGesture" />
 
       <!-- Media: load full metadata + album art from media API before mounting plyr so the correct view/art is stable. -->
@@ -87,10 +89,11 @@
 import { createAsyncComponent } from "@/utils/asyncComponent.js";
 import { resourcesApi, mediaApi } from "@/api";
 import { ensureViewToken, requestViewIdentity } from "@/api/viewToken.js";
-import { goToItem, removeTrailingSlash, removeLastDir } from "@/utils/url.js";
+import { goToItem, removeLastDir } from "@/utils/url.js";
 import LoadingSpinner from "@/components/LoadingSpinner.vue";
 import { state, getters, mutations } from "@/store";
 import { isRawImageMimeType } from "@/utils/mimetype";
+import { isPdfConvertable, previewRawUrl } from "@/utils/previewRawUrl.js";
 import { convertToVTT, getSubtitleFormatExtension } from "@/utils/subtitles";
 import { parseLyrics } from "@/utils/lyrics";
 import { globalVars } from "@/utils/constants";
@@ -163,28 +166,7 @@ export default {
       return false;
     },
     pdfConvertable() {
-      if (!globalVars.muPdfAvailable) {
-        return false;
-      }
-      const ext = `.${state.req.name.split(".").pop().toLowerCase()}`; // Ensure lowercase and dot
-      if (state.user.disableViewingExt.includes(ext)) {
-        return false;
-      }
-      switch (ext) {
-        case '.xps':
-        case '.mobi':
-        case '.fb2':
-        case '.cbz':
-        case '.svg':
-        case '.docx':
-        case '.pptx':
-        case '.xlsx':
-        case '.hwp':
-        case '.hwpx':
-          return true;
-        default:
-          return false;
-      }
+      return isPdfConvertable(state.req.name);
     },
     sidebarShowing() {
       return getters.isSidebarVisible();
@@ -204,56 +186,7 @@ export default {
       return this.isPdf && shouldUsePdfPreviewFallback();
     },
     raw() {
-      const viewToken = state.req.viewToken;
-      const typeHint = state.req.type || state.req.name;
-      const isHeicOrHeif = state.req.type === "image/heic" || state.req.type === "image/heif";
-
-      if (state.isSafari && isHeicOrHeif) {
-        if (getters.isShare()) {
-          return resourcesApi.getViewURL(
-            state.req.source,
-            state.req.path,
-            viewToken,
-            {
-              path: state.shareInfo.subPath,
-              hash: state.shareInfo.hash,
-            },
-            false,
-            typeHint,
-          );
-        }
-        return resourcesApi.getViewURL(state.req.source, state.req.path, viewToken, null, false, typeHint);
-      }
-
-      const getRawPreview = isRawImageMimeType(state.req.type);
-      const getHeicPreview = isHeicOrHeif && globalVars.mediaAvailable && globalVars.enableHeicConversion;
-      if (this.pdfConvertable || getRawPreview || getHeicPreview) {
-        if (getters.isShare()) {
-          const previewPath = removeTrailingSlash(state.req.path);
-          return resourcesApi.getPreviewURLPublic(previewPath, "original", state.req.viewToken);
-        }
-        return (
-          `${resourcesApi.getPreviewURL(
-            state.req.source,
-            state.req.path,
-            state.req.modified,
-          )}&size=original`
-        );
-      }
-      if (getters.isShare()) {
-        return resourcesApi.getViewURL(
-          state.req.source,
-          state.req.path,
-        viewToken,
-          {
-            path: state.shareInfo.subPath,
-            hash: state.shareInfo.hash,
-          },
-          false,
-          typeHint,
-        );
-      }
-      return resourcesApi.getViewURL(state.req.source, state.req.path, viewToken, null, false, typeHint);
+      return previewRawUrl(state.req);
     },
     isDarkMode() {
       return getters.isDarkMode();
@@ -724,6 +657,19 @@ export default {
   background: var(--background);
   z-index: 10000;
   transition: opacity 0.1s ease;
+}
+
+.transition-loading.over-image {
+  background: transparent;
+  pointer-events: none;
+  opacity: 0;
+  animation: transition-loading-in 0.15s ease 0.3s forwards;
+}
+
+@keyframes transition-loading-in {
+  to {
+    opacity: 1;
+  }
 }
 
 .transition-loading .spinner {

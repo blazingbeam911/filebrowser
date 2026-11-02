@@ -1,30 +1,30 @@
 <template>
   <div class="image-ex-container" ref="container" @touchstart="touchStart" @touchmove.prevent="touchMove" @touchend="touchEnd" @dblclick="zoomAuto"
     @mousedown="mousedownStart" @mousemove="mouseMove" @mouseup="mouseUp" @wheel="wheelMove">
-    <!-- Thumbnail placeholder (shown while full image loads, only if cached thumbnail exists) -->
+    <!-- Placeholder: the image's cached listing thumbnail, decoded first and scaled to the
+         size the full image will have, shown while the full image loads. -->
     <img
-      v-if="cachedThumbnailUrl && !fullImageLoaded && !isTiff"
-      :src="cachedThumbnailUrl"
-      class="image-ex-img"
+      v-if="placeholderSrc && !isTiff"
+      :src="placeholderSrc"
+      class="image-ex-img image-ex-placeholder"
       ref="thumbnail"
       aria-hidden="true"
     />
 
-    <!-- Loading spinner overlay (shown while full image loads) -->
+    <!-- Loading spinner overlay (fades in only if loading takes a moment) -->
     <div v-if="!fullImageLoaded" class="image-loading-overlay">
       <LoadingSpinner size="medium" />
     </div>
 
-    <!-- Full image:
-         - Always loading in background via JavaScript
-         - Hidden until loaded if thumbnail exists, otherwise visible for progressive loading -->
+    <!-- Full image: the new image is downloaded and decoded off-screen, then put here, so the
+         previous image (or the placeholder) stays on screen until it can paint at once. -->
     <img
       v-if="!isTiff"
       class="image-ex-img"
       ref="imgex"
       @load="onLoad"
       @error="onImageError"
-      :style="{ display: (cachedThumbnailUrl && !fullImageLoaded) ? 'none' : 'block' }"
+      :style="{ visibility: placeholderSrc ? 'hidden' : 'visible' }"
       aria-hidden="true"
     />
     <canvas
@@ -42,9 +42,32 @@ import { notify } from "@/notify";
 import { getters, mutations, state } from '@/store';
 import { globalVars } from "@/utils/constants";
 import { getBestCachedImage } from "@/utils/imageCache";
+import { isImagePreloaded, pauseImagePreloads, resumeImagePreloads } from "@/utils/imagePreloader.js";
 import { isRawImageMimeType } from "@/utils/mimetype";
 import { refreshViewToken, requestViewIdentity } from "@/api/viewToken.js";
 import throttle from "@/utils/throttle";
+
+/** How long the previous image stays up before the next one's thumbnail replaces it. */
+const PLACEHOLDER_DELAY_MS = 150;
+
+/** Downloads and decodes `url` off-screen; resolves either way (errors surface on the <img>). */
+async function decodeOffscreen(url) {
+  const img = new Image();
+  img.decoding = "async";
+  img.src = url;
+  try {
+    if (typeof img.decode === "function") {
+      await img.decode();
+    } else {
+      await new Promise((resolve) => {
+        img.onload = resolve;
+        img.onerror = resolve;
+      });
+    }
+  } catch (_e) {
+    // Load or decode failed: the visible <img> reports it through onImageError.
+  }
+}
 
 export default {
   components: {
@@ -71,6 +94,13 @@ export default {
       disabledTimer: null,
       imageLoaded: false,
       fullImageLoaded: false,
+      /** Cached thumbnail shown (scaled) while the full image loads; null when none. */
+      placeholderSrc: null,
+      placeholderTimer: null,
+      /** Bumped per load so a slow, superseded load can't replace a newer image. */
+      loadGeneration: 0,
+      /** Zoom/pan reset waits until the new image (or its placeholder) is on screen. */
+      viewResetPending: false,
       loadTimeout: null,
       position: {
         center: { x: 0, y: 0 },
@@ -203,6 +233,12 @@ export default {
     }
   },
   beforeUnmount() {
+    this.loadGeneration++;
+    this.clearPlaceholderTimer();
+    pauseImagePreloads();
+    // A load still in flight never reaches onLoad now: clear its global loading flag, or
+    // the next view (e.g. the folder listing) would keep showing "Loading..." for good.
+    mutations.setLoading("preview-img", false);
     // Clear any pending timeout
     if (this.loadTimeout) {
       clearTimeout(this.loadTimeout);
@@ -264,18 +300,88 @@ export default {
     async loadFullImage() {
       if (!this.src) return;
       mutations.setLoading("preview-img", true);
+      const generation = ++this.loadGeneration;
+      this.clearPlaceholderTimer();
 
       // Set src directly via JavaScript to avoid Vue's HTML entity encoding in template bindings
       // Vue HTML-encodes & to &amp; when using :src="src" in templates
+      // Decode any HTML entities (Vue shouldn't encode props, but decode just in case)
+      const cleanSrc = String(this.src).replace(/&amp;/g, '&');
+      // No new preloads compete with this image; resumed in onLoad / finishImageError.
+      pauseImagePreloads(cleanSrc);
+
+      const imgex = this.$refs.imgex;
+      const somethingOnScreen = Boolean(imgex?.getAttribute?.('src')) || this.placeholderSrc !== null;
+      const thumbnail = this.cachedThumbnailUrl;
+      if (thumbnail && !isImagePreloaded(cleanSrc)) {
+        // With nothing on screen, show the thumbnail as soon as it's decoded. Otherwise keep
+        // the previous image a moment longer: on a fast connection the full image arrives
+        // first and the thumbnail never needs to flash up.
+        const delay = somethingOnScreen ? PLACEHOLDER_DELAY_MS : 0;
+        this.placeholderTimer = setTimeout(() => {
+          this.placeholderTimer = null;
+          void this.showPlaceholder(thumbnail, generation);
+        }, delay);
+      }
+
+      if (!somethingOnScreen && !thumbnail) {
+        // First image and no thumbnail: let it render progressively as it downloads.
+        await this.$nextTick();
+        if (generation === this.loadGeneration) {
+          this.showFullImage(cleanSrc);
+        }
+        return;
+      }
+
+      // Download and decode off-screen, then hand the URL to the visible <img>: the browser
+      // reuses the decoded image, so it paints in one go and onLoad follows. A preloaded
+      // image is already downloaded and decoded; decoding it again could only wait behind
+      // whatever the preloader is decoding next.
+      if (!isImagePreloaded(cleanSrc)) {
+        await decodeOffscreen(cleanSrc);
+      }
       await this.$nextTick();
-      if (this.$refs.imgex && 'src' in this.$refs.imgex) {
-        // Decode any HTML entities (Vue shouldn't encode props, but decode just in case)
-        const cleanSrc = String(this.src).replace(/&amp;/g, '&');
-        this.$refs.imgex.src = cleanSrc;
+      if (generation !== this.loadGeneration) return;
+      this.showFullImage(cleanSrc);
+    },
+    /** Puts `url` in the visible <img>; onLoad / onImageError follow. */
+    showFullImage(url) {
+      const img = this.$refs.imgex;
+      if (!img || !('src' in img)) return;
+      if (img.getAttribute('src') === url && img.complete && img.naturalWidth > 0) {
+        // Already showing this image (e.g. moved away and straight back before the other
+        // image arrived): setting the same src fires no load event, so finish here.
+        this.onLoad();
+        return;
+      }
+      img.src = url;
+    },
+    async showPlaceholder(thumbnail, generation) {
+      await decodeOffscreen(thumbnail);
+      if (generation !== this.loadGeneration || this.fullImageLoaded) return;
+      this.placeholderSrc = thumbnail;
+      this.applyPendingViewReset();
+    },
+    clearPlaceholderTimer() {
+      if (this.placeholderTimer) {
+        clearTimeout(this.placeholderTimer);
+        this.placeholderTimer = null;
       }
     },
+    applyPendingViewReset() {
+      if (!this.viewResetPending) return;
+      this.viewResetPending = false;
+      this.scale = 1;
+      this.position.relative = { x: 0, y: 0 };
+      this.resetEdgeGestureImmediate();
+      this.applyImgTransform();
+    },
     onLoad() {
-      // Step 3: Real image loaded - hide thumbnail and show image
+      // Real image loaded: drop the placeholder and show the image
+      this.clearPlaceholderTimer();
+      this.placeholderSrc = null;
+      this.applyPendingViewReset();
+      resumeImagePreloads();
       this.imageLoaded = true;
       this.fullImageLoaded = true;
       // Clear the timeout if image loaded successfully
@@ -320,6 +426,10 @@ export default {
       this.finishImageError(img);
     },
     finishImageError(img) {
+      this.clearPlaceholderTimer();
+      this.placeholderSrc = null;
+      this.applyPendingViewReset();
+      resumeImagePreloads();
       this.imageLoaded = true;
       this.fullImageLoaded = true;
       mutations.setLoading("preview-img", false);
@@ -867,10 +977,12 @@ export default {
         this.decodeTiff(newSrc);
       }
 
-      this.scale = 1;
-      this.position.relative = { x: 0, y: 0 };
-      this.resetEdgeGestureImmediate();
-      this.applyImgTransform();
+      // Zoom/pan reset happens when the new image (or its placeholder) appears, so the
+      // current image doesn't jump while the next one loads. TIFF swaps immediately.
+      this.viewResetPending = true;
+      if (this.isTiff) {
+        this.applyPendingViewReset();
+      }
 
       if (!this.isTiff) {
         await this.$nextTick();
@@ -882,6 +994,7 @@ export default {
             this.fullImageLoaded = true;
             this.imageLoaded = true;
             mutations.setLoading("preview-img", false);
+            resumeImagePreloads();
             this.scheduleSetCenter();
           }
         }, 30000); // 30 second timeout
@@ -918,7 +1031,16 @@ export default {
   object-fit: contain;
 }
 
+.image-ex-placeholder {
+  /* Same box as the full image will have (it shares .image-ex-img's centering). */
+  width: 100%;
+  height: 100%;
+}
+
 .image-loading-overlay {
+  /* Appears only if loading takes a moment, so quick swaps don't flash a spinner. */
+  opacity: 0;
+  animation: image-loading-overlay-in 0.15s ease 0.3s forwards;
   position: absolute;
   top: 50%;
   left: 50%;
@@ -927,5 +1049,11 @@ export default {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+@keyframes image-loading-overlay-in {
+  to {
+    opacity: 1;
+  }
 }
 </style>

@@ -1,6 +1,6 @@
 import { setActiveViewGrantScope } from "@/api/viewToken.js";
 import { markRaw } from "vue";
-import { resourcesApi, usersApi } from "@/api/index.js";
+import { usersApi } from "@/api/index.js";
 import {
   getEnforcedUserDefaults,
   getShareDefaultsPolicy,
@@ -10,7 +10,7 @@ import {
 import { detectLocale, setLocale } from "@/i18n/index.ts";
 import { notify } from "@/notify/index.ts";
 import { url } from "@/utils/index.ts";
-import { getTypeInfo } from "@/utils/mimetype.js";
+import { clearImagePreloads, refreshImagePreloads } from "@/utils/imagePreloader.js";
 import { getObjectProperty, setObjectProperty, omitObjectProperty } from '@/utils/object.js';
 import { sortedItems } from "@/utils/sort.ts";
 import { isSourceSidebarCategory } from "@/utils/sidebarCategory.ts";
@@ -1156,6 +1156,7 @@ export const mutations = {
     state.navigation.nextRaw = "";
 
     if (!listing || !currentItem) {
+      clearImagePreloads();
       emitStateChanged();
       return;
     }
@@ -1173,6 +1174,7 @@ export const mutations = {
     }
 
     if (state.navigation.currentIndex === -1) {
+      clearImagePreloads();
       emitStateChanged();
       return;
     }
@@ -1184,13 +1186,6 @@ export const mutations = {
       item.path = url.joinPath(directoryPath, item.name);
       state.navigation.previousItem = item;
       state.navigation.previousLink = url.buildItemUrl(item.source, item.path);
-
-      if (getTypeInfo(item.type).simpleType === "image") {
-        const prefetch = mutations.getPrefetchUrl(item);
-        if (prefetch) {
-          state.navigation.previousRaw = prefetch;
-        }
-      }
       break;
     }
 
@@ -1201,15 +1196,16 @@ export const mutations = {
       item.path = url.joinPath(directoryPath, item.name);
       state.navigation.nextItem = item;
       state.navigation.nextLink = url.buildItemUrl(item.source, item.path);
-
-      if (getTypeInfo(item.type).simpleType === "image") {
-        const prefetch = mutations.getPrefetchUrl(item);
-        if (prefetch) {
-          state.navigation.nextRaw = prefetch;
-        }
-      }
       break;
     }
+
+    // Preload the images around this one (per-device settings in utils/imageViewerConfig.js).
+    refreshImagePreloads({
+      items,
+      currentIndex: state.navigation.currentIndex,
+      directoryPath,
+      source: currentItem.source,
+    });
 
     emitStateChanged();
 
@@ -1223,24 +1219,6 @@ export const mutations = {
       }, 3000);
       mutations.setNavigationTimeout(hideTimer);
     }
-  },
-  getPrefetchUrl: (item: Partial<FileListItem>) => {
-    const viewToken = item.viewToken;
-    const typeHint = item.type || item.name;
-    if (getters.isShare()) {
-      return resourcesApi.getViewURL(
-        item.source,
-        item.path,
-        viewToken,
-        {
-          path: item.path,
-          hash: state.shareInfo.hash,
-        },
-        false,
-        typeHint,
-      );
-    }
-    return resourcesApi.getViewURL(item.source, item.path, viewToken, null, false, typeHint);
   },
   setNavigationShow: (show: boolean) => {
     if (state.navigation.show === show) {
@@ -1344,6 +1322,7 @@ export const mutations = {
     state.navigation.previousRaw = "";
     state.navigation.nextRaw = "";
     mutations.clearNavigationTimeout();
+    clearImagePreloads();
     emitStateChanged();
   },
   setNavigationTransitioning: (isTransitioning: boolean) => {

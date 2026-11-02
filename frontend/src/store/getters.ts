@@ -391,8 +391,20 @@ export const getters = {
   isShare: () => {
     return getters.shareHash() !== ""
   },
+  /**
+   * True while moving away from an image shown in the previewer. The preview then stays
+   * mounted (instead of the empty 'loading' view), so the image viewer can keep the current
+   * image on screen until the next one is ready.
+   */
+  isImagePreviewTransition: (): boolean => {
+    if (!state.navigation.isTransitioning || !state.req?.type || state.req.type === 'directory') {
+      return false;
+    }
+    if (getters.fileViewingDisabled(state.req.name ?? '')) return false;
+    return getTypeInfo(state.req.type).simpleType === 'image';
+  },
   currentView: (): string => {
-    if (state.navigation.isTransitioning) return 'loading';
+    if (state.navigation.isTransitioning && !getters.isImagePreviewTransition()) return 'loading';
     const pathname = getters.routePath();
     if (!state.user || state.user?.username === "") return 'login';
     if (pathname.startsWith(`/settings`)) return 'settings';

@@ -949,6 +949,17 @@
       "showPeaksDescription": "每個條形上方的小白色峰值指示器"
     }
   },
+  "imageViewer": {
+    "settings": "Image viewer settings",
+    "deviceOnly": "These settings are saved in this browser only. Set both preload counts to 0 to turn preloading off.",
+    "preloadAhead": "Images to preload ahead",
+    "preloadAheadDescription": "How many images to load in advance in the direction you are browsing, so moving to them is instant. Each preloaded image uses memory and data.",
+    "preloadBehind": "Images to preload behind",
+    "preloadBehindDescription": "How many images to keep loaded in the other direction, for going back.",
+    "preloadMaxMB": "Largest file to preload (MB)",
+    "preloadMaxMBDescription": "Larger files are not preloaded. They still load normally when you open them.",
+    "resetDefaults": "Reset defaults"
+  },
   "fileSizeAnalyzer": {
     "title": "檔案大小分析器",
     "largerThan": "大於（MB）",
