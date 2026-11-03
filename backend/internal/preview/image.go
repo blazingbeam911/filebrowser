@@ -81,7 +81,7 @@ func (x Format) toImaging() imaging.Format {
 // formats are decode-only, so previews for them must be written as JPEG.
 func (x Format) encodable() bool {
 	switch x {
-	case FormatJpeg, FormatPng, FormatGif, FormatTiff, FormatBmp:
+	case FormatJpeg, FormatPng, FormatGif, FormatTiff, FormatBmp, FormatWebp: // fufu: WebP via webp_encode.go
 		return true
 	default:
 		return false
@@ -215,6 +215,8 @@ func (s *Service) resizeWithSize(in io.Reader, out io.Writer, fileSize int64, op
 	var wrappedReader = in
 	var err error
 
+	// fufu: non-JPEG still images get WebP thumbnails (webp_encode.go).
+	opts.Format = thumbnailFormat(opts.Format)
 	// HEIC has no encoder and webp/netpbm are decode-only in imaging; fall back
 	// to JPEG so preview generation does not fail with ErrUnsupportedFormat.
 	if !opts.Format.encodable() {
@@ -266,6 +268,9 @@ func (s *Service) resizeWithSize(in io.Reader, out io.Writer, fileSize int64, op
 	// Fill mode may still need to upscale or crop to reach the target size.
 	bounds := img.Bounds()
 	if opts.ResizeMode != ResizeModeFill && bounds.Dx() <= opts.Width && bounds.Dy() <= opts.Height {
+		if opts.Format == FormatWebp { // fufu
+			return encodeWebP(out, img, opts.Quality)
+		}
 		if opts.Format == FormatJpeg {
 			return jpeg.Encode(out, img, &jpeg.Options{Quality: opts.JpegQuality})
 		}
@@ -283,6 +288,9 @@ func (s *Service) resizeWithSize(in io.Reader, out io.Writer, fileSize int64, op
 	}
 
 	// Encode
+	if opts.Format == FormatWebp { // fufu
+		return encodeWebP(out, img, opts.Quality)
+	}
 	if opts.Format == FormatJpeg {
 		return jpeg.Encode(out, img, &jpeg.Options{Quality: opts.JpegQuality})
 	}

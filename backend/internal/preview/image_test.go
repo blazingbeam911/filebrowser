@@ -79,7 +79,7 @@ func TestService_Resize(t *testing.T) {
 				t.Helper()
 				return newGrayPng(t, 200, 150)
 			},
-			matcher: formatMatcher(FormatPng),
+			matcher: formatMatcher(FormatJpeg), // fufu: non-JPEG targets are encoded as WebP; this flat test image is under minPreviewSize as WebP, so it falls back to JPEG (webp_encode.go)
 		},
 		"convert to jpeg": {
 			options: ResizeOptions{Width: 100, Height: 100, Format: FormatJpeg},
@@ -95,7 +95,7 @@ func TestService_Resize(t *testing.T) {
 				t.Helper()
 				return newGrayJpeg(t, 200, 150)
 			},
-			matcher: formatMatcher(FormatPng),
+			matcher: formatMatcher(FormatJpeg), // fufu: non-JPEG targets are encoded as WebP; this flat test image is under minPreviewSize as WebP, so it falls back to JPEG (webp_encode.go)
 		},
 		"convert to gif": {
 			options: ResizeOptions{Width: 100, Height: 100, Format: FormatGif},
@@ -103,7 +103,7 @@ func TestService_Resize(t *testing.T) {
 				t.Helper()
 				return newGrayJpeg(t, 200, 150)
 			},
-			matcher: formatMatcher(FormatGif),
+			matcher: formatMatcher(FormatJpeg), // fufu: non-JPEG targets are encoded as WebP; this flat test image is under minPreviewSize as WebP, so it falls back to JPEG (webp_encode.go)
 		},
 		"convert to tiff": {
 			options: ResizeOptions{Width: 100, Height: 100, Format: FormatTiff},
@@ -111,7 +111,7 @@ func TestService_Resize(t *testing.T) {
 				t.Helper()
 				return newGrayJpeg(t, 200, 150)
 			},
-			matcher: formatMatcher(FormatTiff),
+			matcher: formatMatcher(FormatJpeg), // fufu: non-JPEG targets are encoded as WebP; this flat test image is under minPreviewSize as WebP, so it falls back to JPEG (webp_encode.go)
 		},
 		"convert to bmp": {
 			options: ResizeOptions{Width: 100, Height: 100, Format: FormatBmp},
@@ -119,7 +119,7 @@ func TestService_Resize(t *testing.T) {
 				t.Helper()
 				return newGrayJpeg(t, 200, 150)
 			},
-			matcher: formatMatcher(FormatBmp),
+			matcher: formatMatcher(FormatJpeg), // fufu: non-JPEG targets are encoded as WebP; this flat test image is under minPreviewSize as WebP, so it falls back to JPEG (webp_encode.go)
 		},
 		"convert to unknown": {
 			options: ResizeOptions{Width: 100, Height: 100, Format: Format(-1)},

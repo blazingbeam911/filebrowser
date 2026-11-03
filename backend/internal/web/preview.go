@@ -310,7 +310,7 @@ func PreviewHelperFunc(w http.ResponseWriter, r *http.Request, d *Context) (int,
 		return http.StatusInternalServerError, err
 	}
 	w.Header().Set("Cache-Control", "private")
-	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Content-Type", http.DetectContentType(previewImg)) // fufu: thumbnails aren't always JPEG
 	http.ServeContent(w, r, d.FileInfo.Name+"-preview.jpg", d.FileInfo.ModTime, bytes.NewReader(previewImg))
 	return 0, nil
 }

@@ -11,6 +11,7 @@ require (
 	github.com/dsoprea/go-exif/v3 v3.0.1
 	github.com/evanoberholster/imagemeta v1.1.0
 	github.com/gen2brain/go-fitz v1.28.2
+	github.com/gen2brain/webp v0.6.4
 	github.com/go-ldap/ldap/v3 v3.4.15
 	github.com/go-playground/validator/v10 v10.30.5
 	github.com/go-webauthn/webauthn v0.18.2
@@ -104,3 +105,7 @@ exclude (
 	github.com/alecthomas/go-check-sumtype v0.5.0
 	github.com/gtsteffaniak/go-ffmpeg v1.1.0
 )
+
+// fufu: gen2brain/webp v0.6.4 without its global WebP decoder registration and
+// system-libwebp loading; see third_party/gen2brain-webp/FUFU.md.
+replace github.com/gen2brain/webp => ./third_party/gen2brain-webp
