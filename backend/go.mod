@@ -7,6 +7,7 @@ require (
 	github.com/asdine/storm/v3 v3.2.1
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/coreos/go-systemd/v22 v22.7.0
+	github.com/deepteams/webp v1.2.8
 	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
 	github.com/dsoprea/go-exif/v3 v3.0.1
 	github.com/evanoberholster/imagemeta v1.1.0
@@ -109,3 +110,7 @@ exclude (
 // fufu: gen2brain/webp v0.6.4 without its global WebP decoder registration and
 // system-libwebp loading; see third_party/gen2brain-webp/FUFU.md.
 replace github.com/gen2brain/webp => ./third_party/gen2brain-webp
+
+// fufu: deepteams/webp v1.2.8 as the WebP decoder, registered through panic-recovering
+// wrappers; see third_party/deepteams-webp/FUFU.md.
+replace github.com/deepteams/webp => ./third_party/deepteams-webp

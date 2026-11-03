@@ -147,30 +147,6 @@ func TestUniformImageFallsBackToJPEG(t *testing.T) {
 	}
 }
 
-// TestWebPDecodingStaysWithXImage pins decision 10: importing the encoder must not make it the
-// process-wide WebP decoder. x/image rejects animated WebP; gen2brain's decoder accepts it, so a
-// successful image.Decode of an animated WebP means gen2brain is registered.
-func TestWebPDecodingStaysWithXImage(t *testing.T) {
-	f1 := image.NewNRGBA(image.Rect(0, 0, 4, 4))
-	f2 := noisyImage(4, 4, false)
-	var anim bytes.Buffer
-	if err := webp.EncodeAll(&anim, &webp.WEBP{Image: []image.Image{f1, f2}, Delay: []int{100, 100}}, webp.Options{Quality: 75}); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := image.Decode(bytes.NewReader(anim.Bytes())); err == nil {
-		t.Fatal("image.Decode accepted an animated WebP: gen2brain/webp is registered as the WebP decoder")
-	}
-	// Lossless WebP must decode exactly (x/image returns NRGBA; gen2brain would return 4:2:0 YCbCr).
-	still := encodeAs(t, noisyImage(32, 32, false), "webp")
-	img, format, err := image.Decode(bytes.NewReader(still))
-	if err != nil || format != "webp" {
-		t.Fatalf("still WebP: format %q, err %v", format, err)
-	}
-	if _, ok := img.(*image.NRGBA); !ok {
-		t.Fatalf("lossless WebP decoded as %T, want *image.NRGBA (x/image)", img)
-	}
-}
-
 // TestWebPEncodeIsPanicSafe: a panic inside the encoder becomes an error.
 func TestWebPEncodeIsPanicSafe(t *testing.T) {
 	if err := safeWebPEncode(io.Discard, panicImage{}, 75); err == nil {

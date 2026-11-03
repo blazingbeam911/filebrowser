@@ -1,0 +1,991 @@
+package lossless
+
+// VP8L forward transform selection for lossless encoding.
+//
+// Implements predictor selection, subtract-green, cross-color transform,
+// and color-indexing (palette) construction. All predictors are implemented
+// inline for self-containment.
+//
+// Reference: libwebp/src/enc/vp8l_enc.c, libwebp/src/dsp/lossless.c
+
+import (
+	"math"
+	"math/bits"
+	"runtime"
+	"sort"
+	"sync"
+)
+
+// numPredictors is the number of VP8L spatial predictors to evaluate (0-13).
+const numPredictors = 14
+
+// Multipliers holds the cross-color transform multipliers for a tile.
+type Multipliers struct {
+	GreenToRed  int8
+	GreenToBlue int8
+	RedToBlue   int8
+}
+
+// ---------------------------------------------------------------------------
+// Pixel arithmetic helpers
+// ---------------------------------------------------------------------------
+
+// subPixels computes component-wise subtraction (a - b) mod 256.
+// The bias constants prevent borrow propagation between adjacent channels,
+// matching libwebp's VP8LSubPixels.
+func subPixels(a, b uint32) uint32 {
+	alphaAndGreen := 0x00ff00ff + (a & 0xff00ff00) - (b & 0xff00ff00)
+	redAndBlue := 0xff00ff00 + (a & 0x00ff00ff) - (b & 0x00ff00ff)
+	return (alphaAndGreen & 0xff00ff00) | (redAndBlue & 0x00ff00ff)
+}
+
+// avg2 computes per-component average of two ARGB pixels without overflow.
+func avg2(a, b uint32) uint32 {
+	return (((a ^ b) & 0xfefefefe) >> 1) + (a & b)
+}
+
+// selectPred implements the VP8L select predictor.
+// Compares per-component distance |T-TL| vs |L-TL| to decide T or L.
+// Unrolled for all 4 ARGB channels to avoid loop overhead.
+func selectPred(left, top, topLeft uint32) uint32 {
+	// Channel 0 (blue, bits 0-7).
+	ac0 := int32(top&0xff) - int32(topLeft&0xff)
+	bc0 := int32(left&0xff) - int32(topLeft&0xff)
+	if ac0 < 0 {
+		ac0 = -ac0
+	}
+	if bc0 < 0 {
+		bc0 = -bc0
+	}
+	// Channel 1 (green, bits 8-15).
+	ac1 := int32((top>>8)&0xff) - int32((topLeft>>8)&0xff)
+	bc1 := int32((left>>8)&0xff) - int32((topLeft>>8)&0xff)
+	if ac1 < 0 {
+		ac1 = -ac1
+	}
+	if bc1 < 0 {
+		bc1 = -bc1
+	}
+	// Channel 2 (red, bits 16-23).
+	ac2 := int32((top>>16)&0xff) - int32((topLeft>>16)&0xff)
+	bc2 := int32((left>>16)&0xff) - int32((topLeft>>16)&0xff)
+	if ac2 < 0 {
+		ac2 = -ac2
+	}
+	if bc2 < 0 {
+		bc2 = -bc2
+	}
+	// Channel 3 (alpha, bits 24-31).
+	ac3 := int32(top>>24) - int32(topLeft>>24)
+	bc3 := int32(left>>24) - int32(topLeft>>24)
+	if ac3 < 0 {
+		ac3 = -ac3
+	}
+	if bc3 < 0 {
+		bc3 = -bc3
+	}
+	// pa_minus_pb = sum of (|left - topLeft| - |top - topLeft|), matching the
+	// decoder's selectPredictor and libwebp's Select. The previous code summed
+	// (ac - bc), i.e. the negation, which inverted the top/left decision and
+	// produced residuals the decoder could not reconstruct (issue #7).
+	pa := (bc0 - ac0) + (bc1 - ac1) + (bc2 - ac2) + (bc3 - ac3)
+	if pa <= 0 {
+		return top
+	}
+	return left
+}
+
+// clampByte clamps v to [0, 255].
+func clampByte(v int32) uint8 {
+	if v < 0 {
+		return 0
+	}
+	if v > 255 {
+		return 255
+	}
+	return uint8(v)
+}
+
+// clampAddSubFull computes (a + b - c) per component, clamped to [0, 255].
+func clampAddSubFull(a, b, c uint32) uint32 {
+	var result uint32
+	for shift := uint(0); shift < 32; shift += 8 {
+		va := int32((a >> shift) & 0xff)
+		vb := int32((b >> shift) & 0xff)
+		vc := int32((c >> shift) & 0xff)
+		result |= uint32(clampByte(va+vb-vc)) << shift
+	}
+	return result
+}
+
+// clampAddSubHalf computes avg + (avg - c) / 2 per component, clamped.
+func clampAddSubHalf(avg, c uint32) uint32 {
+	var result uint32
+	for shift := uint(0); shift < 32; shift += 8 {
+		va := int32((avg >> shift) & 0xff)
+		vc := int32((c >> shift) & 0xff)
+		result |= uint32(clampByte(va+(va-vc)/2)) << shift
+	}
+	return result
+}
+
+// predictPixel returns the predicted pixel for the given mode using the
+// standard VP8L predictor definitions (modes 0-13).
+//
+//	Mode 0:  ARGB_BLACK (0xff000000)
+//	Mode 1:  L
+//	Mode 2:  T
+//	Mode 3:  TR (top-right)
+//	Mode 4:  TL (top-left)
+//	Mode 5:  avg2(avg2(L, TR), T)
+//	Mode 6:  avg2(L, TL)
+//	Mode 7:  avg2(L, T)
+//	Mode 8:  avg2(TL, T)
+//	Mode 9:  avg2(T, TR)
+//	Mode 10: avg2(avg2(L, TL), avg2(T, TR))
+//	Mode 11: Select(L, T, TL)
+//	Mode 12: ClampedAddSubtractFull(L, T, TL)
+//	Mode 13: ClampedAddSubtractHalf(avg2(L, T), TL)
+func predictPixel(mode int, left, top, topRight, topLeft uint32) uint32 {
+	switch mode {
+	case 0:
+		return ARGBBlack
+	case 1:
+		return left
+	case 2:
+		return top
+	case 3:
+		return topRight
+	case 4:
+		return topLeft
+	case 5:
+		return avg2(avg2(left, topRight), top)
+	case 6:
+		return avg2(left, topLeft)
+	case 7:
+		return avg2(left, top)
+	case 8:
+		return avg2(topLeft, top)
+	case 9:
+		return avg2(top, topRight)
+	case 10:
+		return avg2(avg2(left, topLeft), avg2(top, topRight))
+	case 11:
+		return selectPred(left, top, topLeft)
+	case 12:
+		return clampAddSubFull(left, top, topLeft)
+	case 13:
+		return clampAddSubHalf(avg2(left, top), topLeft)
+	default:
+		return ARGBBlack
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Entropy cost estimation
+// ---------------------------------------------------------------------------
+
+// bestPredictorForTile evaluates all candidate predictor modes for one tile
+// in a SINGLE pass over its pixels and returns the mode with the lowest
+// estimated entropy (ties resolved in favor of the lowest mode, like the
+// former per-mode loop). The entropy estimate matches the C reference
+// (VP8LResidualImage / PredictionCostSpatialHistogram): per-channel Shannon
+// entropy over the prediction residuals.
+//
+// Walking the tile once and accumulating one histogram per mode amortizes
+// the neighbour gathering across all modes instead of redoing it per mode.
+// histos is a caller-provided scratch of maxMode*4*256 bins, reused across
+// tiles by each worker.
+//
+// For tiles larger than 16x16, subsamples every 2nd row to reduce
+// predictPixel calls by 50% with negligible accuracy impact.
+func bestPredictorForTile(argb []uint32, width, height, tx, ty, bits, maxMode int, histos []uint32) int {
+	tileSize := 1 << bits
+	xStart := tx * tileSize
+	yStart := ty * tileSize
+	xEnd := xStart + tileSize
+	if xEnd > width {
+		xEnd = width
+	}
+	yEnd := yStart + tileSize
+	if yEnd > height {
+		yEnd = height
+	}
+
+	// Subsample rows for large tiles: process every 2nd row.
+	yStep := 1
+	if yEnd-yStart > 16 {
+		yStep = 2
+	}
+
+	// One group of 4x256 bins per mode: [0]=alpha, [1]=red, [2]=green, [3]=blue.
+	histos = histos[:maxMode*1024]
+	for i := range histos {
+		histos[i] = 0
+	}
+	count := uint32(0)
+
+	for y := yStart; y < yEnd; y += yStep {
+		rowOff := y * width
+		row := argb[rowOff : rowOff+width : rowOff+width]
+		var prevRow []uint32
+		if y > 0 {
+			pr := rowOff - width
+			prevRow = argb[pr : pr+width : pr+width]
+		}
+		for x := xStart; x < xEnd; x++ {
+			px := row[x]
+
+			var left, top, topRight, topLeft uint32
+			if x > 0 {
+				left = row[x-1]
+			}
+			if y > 0 {
+				top = prevRow[x]
+				if x > 0 {
+					topLeft = prevRow[x-1]
+				}
+				if x < width-1 {
+					topRight = prevRow[x+1]
+				} else {
+					topRight = top
+				}
+			}
+			count++
+
+			// For the first pixel (0,0) and borders, some neighbours
+			// default to 0. Compute every mode's prediction from the same
+			// neighbours in straight-line code (no per-mode switch), sharing
+			// the avg2 subexpressions modes 5-13 have in common.
+			var preds [numPredictors]uint32
+			preds[0] = ARGBBlack
+			preds[1] = left
+			preds[2] = top
+			preds[3] = topRight
+			if maxMode > 4 {
+				preds[4] = topLeft
+				preds[5] = avg2(avg2(left, topRight), top)
+				preds[6] = avg2(left, topLeft)
+				preds[7] = avg2(left, top)
+				if maxMode > 8 {
+					preds[8] = avg2(topLeft, top)
+					preds[9] = avg2(top, topRight)
+					preds[10] = avg2(preds[6], preds[9])
+					preds[11] = selectPred(left, top, topLeft)
+					preds[12] = clampAddSubFull(left, top, topLeft)
+					preds[13] = clampAddSubHalf(preds[7], topLeft)
+				}
+			}
+			for mode := 0; mode < maxMode; mode++ {
+				residual := subPixels(px, preds[mode])
+				base := mode * 1024
+				histos[base+int((residual>>24)&0xff)]++
+				histos[base+256+int((residual>>16)&0xff)]++
+				histos[base+512+int((residual>>8)&0xff)]++
+				histos[base+768+int(residual&0xff)]++
+			}
+		}
+	}
+
+	if count == 0 {
+		return 0
+	}
+
+	// Shannon entropy summed across all 4 channel histograms.
+	// Uses fastSLog2(n) = n*log2(n) identity:
+	//   H*count = sum_ch(fastSLog2(count) - sum_bins(fastSLog2(h_i)))
+	slogCount := fastSLog2(count)
+	bestMode := 0
+	bestCost := math.MaxFloat64
+	for mode := 0; mode < maxMode; mode++ {
+		entropy := 0.0
+		for ch := 0; ch < 4; ch++ {
+			channelEntropy := slogCount
+			base := mode*1024 + ch*256
+			for i := 0; i < 256; i++ {
+				if histos[base+i] > 0 {
+					channelEntropy -= fastSLog2(histos[base+i])
+				}
+			}
+			entropy += channelEntropy
+		}
+		if entropy < bestCost {
+			bestCost = entropy
+			bestMode = mode
+		}
+	}
+	return bestMode
+}
+
+// ---------------------------------------------------------------------------
+// Apply predictor residuals using scratch buffers (forward transform)
+// ---------------------------------------------------------------------------
+
+// copyImageWithPrediction computes prediction residuals for the entire image
+// using scratch row buffers, matching libwebp's CopyImageWithPrediction.
+//
+// The key invariant is that predictions are always computed from ORIGINAL pixel
+// values, never from already-computed residuals. Two scratch rows (upperRow and
+// currentRow) hold copies of the original pixels. Residuals are written
+// directly to the output array.
+//
+// Arguments:
+//   - argb: the original (unmodified) pixel data
+//   - width, height: image dimensions
+//   - bits: tile size exponent (tile side = 1 << bits)
+//   - modes: the transform data array with the predictor mode per tile
+//   - out: the output array where residuals are written (same length as argb)
+func copyImageWithPrediction(argb []uint32, width, height, bits int, modes []uint32, out []uint32) {
+	tilesPerRow := VP8LSubSampleSize(width, bits)
+
+	// Scratch buffers: width+1 to allow the top-right pixel to wrap to the
+	// leftmost pixel of the next row when at the right edge.
+	// Fused into a single allocation.
+	rowBuf := make([]uint32, 2*(width+1))
+	upperRow := rowBuf[:width+1]
+	currentRow := rowBuf[width+1:]
+
+	for y := 0; y < height; y++ {
+		// Swap: previous currentRow becomes upperRow.
+		upperRow, currentRow = currentRow, upperRow
+
+		// Copy the current row of original pixels into currentRow.
+		// Include one extra pixel to the right (wrapping to the next row's
+		// first pixel) so that the top-right neighbor is available.
+		copyLen := width
+		if y+1 < height {
+			copyLen = width + 1
+		}
+		copy(currentRow, argb[y*width:y*width+copyLen])
+
+		for x := 0; x < width; {
+			mode := int((modes[(y>>uint(bits))*tilesPerRow+(x>>uint(bits))] >> 8) & 0xff)
+			xEnd := (x | ((1 << uint(bits)) - 1)) + 1 // next tile boundary
+			if xEnd > width {
+				xEnd = width
+			}
+
+			for ; x < xEnd; x++ {
+				var pred uint32
+				// The encoder must override predictor modes at edges to match
+				// the decoder (PredictorInverseTransform), which always uses:
+				//   row 0, x=0: mode 0 (ARGB_BLACK)
+				//   row 0, x>0: mode 1 (left pixel)
+				//   row >0, x=0: mode 2 (top pixel)
+				// This matches C's GetResidual in predictor_enc.c.
+				if y == 0 {
+					if x == 0 {
+						pred = ARGBBlack
+					} else {
+						pred = currentRow[x-1] // left
+					}
+				} else if x == 0 {
+					pred = upperRow[x] // top
+				} else {
+					left := currentRow[x-1]
+					top := upperRow[x]
+					topLeft := upperRow[x-1]
+					var topRight uint32
+					if x < width-1 {
+						topRight = upperRow[x+1]
+					} else {
+						topRight = upperRow[width]
+					}
+					pred = predictPixel(mode, left, top, topRight, topLeft)
+				}
+				out[y*width+x] = subPixels(currentRow[x], pred)
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ResidualImage: predictor selection + residual computation
+// ---------------------------------------------------------------------------
+
+// ResidualImage selects the best predictor per tile and computes prediction
+// residuals. Returns the transform data (predictor modes encoded per tile)
+// and the residual image.
+//
+// The implementation is split into two phases to avoid the in-place corruption
+// bug where residuals overwrite original pixels before they are needed as
+// neighbors for adjacent predictions:
+//
+//   Phase 1: Select the best predictor mode per tile by evaluating entropy
+//            costs on the ORIGINAL (unmodified) pixel data.
+//   Phase 2: Compute all residuals using scratch row buffers that hold copies
+//            of original pixels, matching libwebp's CopyImageWithPrediction.
+func ResidualImage(argb []uint32, width, height, bits, quality int, residualsBuf []uint32) (transformData []uint32, residuals []uint32) {
+	tileXSize := VP8LSubSampleSize(width, bits)
+	tileYSize := VP8LSubSampleSize(height, bits)
+	transformData = make([]uint32, tileXSize*tileYSize)
+
+	// Maximum number of predictors to try depends on quality.
+	maxMode := numPredictors
+	if quality < 25 {
+		maxMode = 4
+	} else if quality < 50 {
+		maxMode = 8
+	}
+
+	// Phase 1: Select best predictor per tile using ORIGINAL pixels.
+	// bestPredictorForTile reads from argb but never modifies it, so all
+	// tiles can be evaluated in parallel. Each worker owns one histogram
+	// scratch buffer, reused across its tiles.
+	numTiles := tileXSize * tileYSize
+	if numTiles >= 16 {
+		// Parallel predictor selection: partition tile rows across goroutines.
+		numWorkers := runtime.GOMAXPROCS(0)
+		if numWorkers > tileYSize {
+			numWorkers = tileYSize
+		}
+		var wg sync.WaitGroup
+		wg.Add(numWorkers)
+		rowsPerWorker := (tileYSize + numWorkers - 1) / numWorkers
+		for w := 0; w < numWorkers; w++ {
+			tyStart := w * rowsPerWorker
+			tyEnd := tyStart + rowsPerWorker
+			if tyEnd > tileYSize {
+				tyEnd = tileYSize
+			}
+			go func(tyStart, tyEnd int) {
+				defer wg.Done()
+				histos := predHistosPool.Get().([]uint32)
+				defer predHistosPool.Put(histos)
+				for ty := tyStart; ty < tyEnd; ty++ {
+					for tx := 0; tx < tileXSize; tx++ {
+						bestMode := bestPredictorForTile(argb, width, height, tx, ty, bits, maxMode, histos)
+						transformData[ty*tileXSize+tx] = uint32(bestMode)<<8 | ARGBBlack
+					}
+				}
+			}(tyStart, tyEnd)
+		}
+		wg.Wait()
+	} else {
+		histos := predHistosPool.Get().([]uint32)
+		for ty := 0; ty < tileYSize; ty++ {
+			for tx := 0; tx < tileXSize; tx++ {
+				bestMode := bestPredictorForTile(argb, width, height, tx, ty, bits, maxMode, histos)
+				transformData[ty*tileXSize+tx] = uint32(bestMode)<<8 | ARGBBlack
+			}
+		}
+		predHistosPool.Put(histos)
+	}
+
+	// Phase 2: Compute residuals using scratch row buffers so that
+	// predictions are always computed from original pixel values.
+	pixCount := len(argb)
+	if cap(residualsBuf) >= pixCount {
+		residuals = residualsBuf[:pixCount]
+	} else {
+		residuals = make([]uint32, pixCount)
+	}
+	copyImageWithPrediction(argb, width, height, bits, transformData, residuals)
+
+	return transformData, residuals
+}
+
+// ---------------------------------------------------------------------------
+// Subtract green transform
+// ---------------------------------------------------------------------------
+
+// SubtractGreen applies the subtract-green transform in place.
+// For each pixel, the green channel value is subtracted from red and blue.
+func SubtractGreen(argb []uint32) {
+	for i, px := range argb {
+		green := (px >> 8) & 0xff
+		red := ((px >> 16) & 0xff - green) & 0xff
+		blue := (px&0xff - green) & 0xff
+		argb[i] = (px & 0xff00ff00) | (red << 16) | blue
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Cross-color transform helpers
+// ---------------------------------------------------------------------------
+
+// encColorTransformDelta computes (m * color) >> 5, matching libwebp.
+func encColorTransformDelta(m int8, color uint8) int8 {
+	return int8((int32(m) * int32(int8(color))) >> 5)
+}
+
+// packMultipliers encodes Multipliers into a uint32 for the transform data.
+// Layout matches the decoder's colorCodeToMultipliers:
+//
+//	bits [7:0]   = greenToRed
+//	bits [15:8]  = greenToBlue
+//	bits [23:16] = redToBlue
+func packMultipliers(m Multipliers) uint32 {
+	return uint32(uint8(m.GreenToRed)) |
+		uint32(uint8(m.GreenToBlue))<<8 |
+		uint32(uint8(m.RedToBlue))<<16
+}
+
+// applyColorTransformPixel applies the forward cross-color transform to a
+// single pixel: subtracts the predicted color shifts from red and blue.
+func applyColorTransformPixel(m Multipliers, argb uint32) uint32 {
+	green := int8(argb >> 8)
+	red := uint8(argb >> 16)
+	blue := uint8(argb)
+
+	newRed := (int32(red) - int32(encColorTransformDelta(m.GreenToRed, uint8(green)))) & 0xff
+	newBlue := (int32(blue) - int32(encColorTransformDelta(m.GreenToBlue, uint8(green)))) & 0xff
+	newBlue = (newBlue - int32(encColorTransformDelta(m.RedToBlue, uint8(red)))) & 0xff
+
+	return (argb & 0xff00ff00) | (uint32(newRed) << 16) | uint32(newBlue)
+}
+
+// findBestMultipliers finds the best cross-color multipliers for a tile
+// by minimizing the absolute sum of residuals over a sparse search.
+// scratch must have length >= 5 * maxTilePixels bytes for byte-packed
+// channel arrays. quality controls coarse search granularity.
+func findBestMultipliers(argb []uint32, width, height, tx, ty, bits, quality int, scratch []uint8) Multipliers {
+	tileSize := 1 << bits
+	xStart := tx * tileSize
+	yStart := ty * tileSize
+	xEnd := xStart + tileSize
+	if xEnd > width {
+		xEnd = width
+	}
+	yEnd := yStart + tileSize
+	if yEnd > height {
+		yEnd = height
+	}
+
+	maxPixels := (xEnd - xStart) * (yEnd - yStart)
+	if maxPixels == 0 {
+		return Multipliers{}
+	}
+
+	// Use byte-packed scratch buffer for 5 arrays: greens, reds, blues,
+	// adjustedReds, adjustedBlues. 4x less memory than int32 arrays.
+	needed := 5 * maxPixels
+	if len(scratch) < needed {
+		scratch = make([]uint8, needed)
+	}
+	greens := scratch[:maxPixels]
+	reds := scratch[maxPixels : 2*maxPixels]
+	blues := scratch[2*maxPixels : 3*maxPixels]
+	adjustedReds := scratch[3*maxPixels : 4*maxPixels]
+	adjustedBlues := scratch[4*maxPixels : 5*maxPixels]
+
+	// Collect green, red, blue samples from the tile.
+	n := 0
+	for y := yStart; y < yEnd; y++ {
+		for x := xStart; x < xEnd; x++ {
+			px := argb[y*width+x]
+			greens[n] = uint8(px >> 8)
+			reds[n] = uint8(px >> 16)
+			blues[n] = uint8(px)
+			n++
+		}
+	}
+	greens = greens[:n]
+	reds = reds[:n]
+	blues = blues[:n]
+
+	coarseStep := int32(8)
+
+	// Search for greenToRed that minimizes sum of |red - (greenToRed * green >> 5)|.
+	bestGreenToRed := findBestMultiplier(greens, reds, coarseStep)
+
+	// Compute adjusted reds after greenToRed correction.
+	adjustedReds = adjustedReds[:n]
+	deltaLUT := &multiplierDeltaByteLUT[int(bestGreenToRed)+128]
+	for i, r := range reds {
+		adjustedReds[i] = r - deltaLUT[greens[i]]
+	}
+
+	// Search for greenToBlue.
+	bestGreenToBlue := findBestMultiplier(greens, blues, coarseStep)
+
+	// Search for redToBlue using adjusted reds.
+	adjustedBlues = adjustedBlues[:n]
+	deltaLUT = &multiplierDeltaByteLUT[int(bestGreenToBlue)+128]
+	for i, b := range blues {
+		adjustedBlues[i] = b - deltaLUT[greens[i]]
+	}
+	bestRedToBlue := findBestMultiplier(adjustedReds, adjustedBlues, coarseStep)
+
+	return Multipliers{
+		GreenToRed:  bestGreenToRed,
+		GreenToBlue: bestGreenToBlue,
+		RedToBlue:   bestRedToBlue,
+	}
+}
+
+// findBestMultiplier finds the int8 multiplier m that minimizes the total
+// absolute residual sum |target[i] - (m * source[i] >> 5)| mod 256.
+// coarseStep controls the coarse search granularity (8 for high quality, 16 for speed).
+func findBestMultiplier(source, target []uint8, coarseStep int32) int8 {
+	bestM := int8(0)
+	bestCost := int64(math.MaxInt64)
+
+	// Coarse search. Use threshold-based early exit.
+	for m := int32(-128); m <= 127; m += coarseStep {
+		cost := multiplierCost(int8(m), source, target, bestCost)
+		if cost < bestCost {
+			bestCost = cost
+			bestM = int8(m)
+		}
+	}
+
+	// Fine search around the best coarse value (always ±7).
+	coarseM := int32(bestM)
+	for m := coarseM - 7; m <= coarseM+7; m++ {
+		if m < -128 || m > 127 {
+			continue
+		}
+		cost := multiplierCost(int8(m), source, target, bestCost)
+		if cost < bestCost {
+			bestCost = cost
+			bestM = int8(m)
+		}
+	}
+
+	return bestM
+}
+
+// multiplierDeltaTable is a precomputed [256][256]int32 table that maps
+// (multiplier+128, color) -> (multiplier * int8(color)) >> 5.
+// Eliminates per-call LUT rebuild in multiplierCost (~25M iterations saved).
+var multiplierDeltaTable [256][256]int32
+
+// multiplierDeltaByteLUT stores the low 8 bits of the delta: uint8((m * int8(c)) >> 5).
+// Used by the byte-packed multiplierCost for 4x better cache utilization.
+var multiplierDeltaByteLUT [256][256]uint8
+
+func init() {
+	for m := -128; m <= 127; m++ {
+		for c := 0; c < 256; c++ {
+			d := (int32(m) * int32(int8(c))) >> 5
+			multiplierDeltaTable[m+128][c] = d
+			multiplierDeltaByteLUT[m+128][c] = uint8(d)
+		}
+	}
+}
+
+// multiplierCost computes the total absolute residual for multiplier m
+// using byte-packed source/target arrays for optimal cache utilization.
+// If threshold >= 0 and the running total exceeds it, returns early with a
+// value > threshold. Pass threshold < 0 to disable early exit.
+func multiplierCost(m int8, source, target []uint8, threshold int64) int64 {
+	deltaLUT := &multiplierDeltaByteLUT[int(m)+128]
+	n := len(source)
+	if n == 0 {
+		return 0
+	}
+	// BCE hints.
+	_ = source[n-1]
+	_ = target[n-1]
+
+	total := int64(0)
+
+	// Process 8 elements at a time with periodic threshold checks.
+	// With uint8 arrays, 8 elements = 8 bytes vs 32 bytes with int32.
+	i := 0
+	n8 := n - 7
+	for ; i < n8; i += 8 {
+		r0 := target[i] - deltaLUT[source[i]]
+		if r0 > 128 {
+			r0 = -r0
+		}
+		r1 := target[i+1] - deltaLUT[source[i+1]]
+		if r1 > 128 {
+			r1 = -r1
+		}
+		r2 := target[i+2] - deltaLUT[source[i+2]]
+		if r2 > 128 {
+			r2 = -r2
+		}
+		r3 := target[i+3] - deltaLUT[source[i+3]]
+		if r3 > 128 {
+			r3 = -r3
+		}
+		r4 := target[i+4] - deltaLUT[source[i+4]]
+		if r4 > 128 {
+			r4 = -r4
+		}
+		r5 := target[i+5] - deltaLUT[source[i+5]]
+		if r5 > 128 {
+			r5 = -r5
+		}
+		r6 := target[i+6] - deltaLUT[source[i+6]]
+		if r6 > 128 {
+			r6 = -r6
+		}
+		r7 := target[i+7] - deltaLUT[source[i+7]]
+		if r7 > 128 {
+			r7 = -r7
+		}
+		total += int64(r0) + int64(r1) + int64(r2) + int64(r3) +
+			int64(r4) + int64(r5) + int64(r6) + int64(r7)
+		if total > threshold {
+			return total
+		}
+	}
+	// Process remaining elements.
+	for ; i < n; i++ {
+		r := target[i] - deltaLUT[source[i]]
+		if r > 128 {
+			r = -r
+		}
+		total += int64(r)
+	}
+	return total
+}
+
+// ---------------------------------------------------------------------------
+// ColorSpaceTransform: cross-color transform selection
+// ---------------------------------------------------------------------------
+
+// ColorSpaceTransform selects the best cross-color multipliers per tile and
+// applies the forward transform in place. Returns the transform data.
+func ColorSpaceTransform(argb []uint32, width, height, bits, quality int) []uint32 {
+	tileXSize := VP8LSubSampleSize(width, bits)
+	tileYSize := VP8LSubSampleSize(height, bits)
+	transformData := make([]uint32, tileXSize*tileYSize)
+
+	tileSize := 1 << bits
+	maxTilePixels := tileSize * tileSize
+	numTiles := tileXSize * tileYSize
+
+	if numTiles >= 16 {
+		// Parallel cross-color transform: tiles don't overlap, so both
+		// selection and application can run independently per tile.
+		numWorkers := runtime.GOMAXPROCS(0)
+		if numWorkers > tileYSize {
+			numWorkers = tileYSize
+		}
+		var wg sync.WaitGroup
+		wg.Add(numWorkers)
+		rowsPerWorker := (tileYSize + numWorkers - 1) / numWorkers
+		for w := 0; w < numWorkers; w++ {
+			tyStart := w * rowsPerWorker
+			tyEnd := tyStart + rowsPerWorker
+			if tyEnd > tileYSize {
+				tyEnd = tileYSize
+			}
+			go func(tyStart, tyEnd int) {
+				defer wg.Done()
+				scratch := make([]uint8, 5*maxTilePixels)
+				for ty := tyStart; ty < tyEnd; ty++ {
+					for tx := 0; tx < tileXSize; tx++ {
+						m := findBestMultipliers(argb, width, height, tx, ty, bits, quality, scratch)
+						transformData[ty*tileXSize+tx] = packMultipliers(m)
+						applyColorTransformTile(argb, width, height, tx, ty, bits, m)
+					}
+				}
+			}(tyStart, tyEnd)
+		}
+		wg.Wait()
+	} else {
+		scratch := make([]uint8, 5*maxTilePixels)
+		for ty := 0; ty < tileYSize; ty++ {
+			for tx := 0; tx < tileXSize; tx++ {
+				m := findBestMultipliers(argb, width, height, tx, ty, bits, quality, scratch)
+				transformData[ty*tileXSize+tx] = packMultipliers(m)
+				applyColorTransformTile(argb, width, height, tx, ty, bits, m)
+			}
+		}
+	}
+
+	return transformData
+}
+
+// applyColorTransformTile applies the forward cross-color transform to every
+// pixel in the given tile.
+func applyColorTransformTile(argb []uint32, width, height, tx, ty, bits int, m Multipliers) {
+	tileSize := 1 << bits
+	xStart := tx * tileSize
+	yStart := ty * tileSize
+	xEnd := xStart + tileSize
+	if xEnd > width {
+		xEnd = width
+	}
+	yEnd := yStart + tileSize
+	if yEnd > height {
+		yEnd = height
+	}
+
+	for y := yStart; y < yEnd; y++ {
+		for x := xStart; x < xEnd; x++ {
+			idx := y*width + x
+			argb[idx] = applyColorTransformPixel(m, argb[idx])
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Color indexing (palette) build
+// ---------------------------------------------------------------------------
+
+// predHistosPool reuses the per-worker histogram scratch of
+// bestPredictorForTile (numPredictors groups of 4x256 bins) across workers
+// and encodes; callers slice it down to the maxMode they evaluate.
+var predHistosPool = sync.Pool{
+	New: func() any { return make([]uint32, numPredictors*1024) },
+}
+
+// colorTableBits sizes the open-addressing hash tables used for palette
+// lookups: 1024 slots for at most MaxPaletteSize+1 = 257 distinct colors
+// keeps the load factor low enough for short probe sequences.
+const colorTableBits = 10
+
+// colorTableHash spreads an ARGB color over the table (same multiplier as
+// libwebp's palette hashing).
+func colorTableHash(c uint32) uint32 {
+	return (c * 0x1e35a7bd) >> (32 - colorTableBits)
+}
+
+// ColorIndexBuild scans all pixels to collect unique colors. If the number of
+// unique colors is at most MaxPaletteSize (256), it returns the sorted palette
+// and true. Otherwise it returns nil, 0, false.
+func ColorIndexBuild(argb []uint32, width, height int) (palette []uint32, paletteSize int, ok bool) {
+	total := width * height
+	if total == 0 {
+		return nil, 0, false
+	}
+
+	// Open-addressing hash set on the stack: much faster than a map for the
+	// per-pixel insert, and allocation-free.
+	var keys [1 << colorTableBits]uint32
+	var used [1 << colorTableBits]bool
+	count := 0
+
+	last := ^argb[0] // differs from argb[0] so the first pixel is inserted
+	for i := 0; i < total; i++ {
+		c := argb[i]
+		if c == last {
+			continue // runs of identical pixels skip the probe entirely
+		}
+		last = c
+		h := colorTableHash(c)
+		for used[h] && keys[h] != c {
+			h = (h + 1) & (1<<colorTableBits - 1)
+		}
+		if !used[h] {
+			used[h] = true
+			keys[h] = c
+			count++
+			if count > MaxPaletteSize {
+				return nil, 0, false
+			}
+		}
+	}
+
+	palette = make([]uint32, 0, count)
+	for i, u := range used {
+		if u {
+			palette = append(palette, keys[i])
+		}
+	}
+	sort.Slice(palette, func(i, j int) bool {
+		return palette[i] < palette[j]
+	})
+
+	return palette, len(palette), true
+}
+
+// ---------------------------------------------------------------------------
+// ApplyPaletteTransform: replace pixels with palette indices
+// ---------------------------------------------------------------------------
+
+// ApplyPaletteTransform replaces each pixel with its palette index (encoded
+// in the green channel) and packs multiple indices per uint32 when the palette
+// is small enough.
+//
+// Packing rules:
+//   - palette <= 2 colors:  1-bit indices, 8 pixels per uint32
+//   - palette <= 4 colors:  2-bit indices, 4 pixels per uint32
+//   - palette <= 16 colors: 4-bit indices, 2 pixels per uint32
+//   - otherwise:            8-bit indices, 1 pixel per uint32
+func ApplyPaletteTransform(argb []uint32, width, height int, palette []uint32) (packed []uint32, packedWidth int) {
+	// Build inverse lookup (color -> index) as an open-addressing table on
+	// the stack: a map lookup per pixel is 5-10x slower.
+	var keys [1 << colorTableBits]uint32
+	var vals [1 << colorTableBits]uint32
+	var used [1 << colorTableBits]bool
+	for i, c := range palette {
+		h := colorTableHash(c)
+		for used[h] {
+			h = (h + 1) & (1<<colorTableBits - 1)
+		}
+		used[h] = true
+		keys[h] = c
+		vals[h] = uint32(i)
+	}
+	lookup := func(c uint32) uint32 {
+		h := colorTableHash(c)
+		for used[h] && keys[h] != c {
+			h = (h + 1) & (1<<colorTableBits - 1)
+		}
+		return vals[h]
+	}
+
+	paletteSize := len(palette)
+
+	// Determine packing parameters.
+	var bitsPerPixel int
+	switch {
+	case paletteSize <= 2:
+		bitsPerPixel = 1
+	case paletteSize <= 4:
+		bitsPerPixel = 2
+	case paletteSize <= 16:
+		bitsPerPixel = 4
+	default:
+		bitsPerPixel = 8
+	}
+
+	pixelsPerWord := 8 / bitsPerPixel
+	packedWidth = (width + pixelsPerWord - 1) / pixelsPerWord
+
+	packed = make([]uint32, packedWidth*height)
+
+	// Memoize the last color: palette images are dominated by runs of
+	// identical pixels, which skip the hash probe entirely.
+	var lastColor, lastIdx uint32
+	if width*height > 0 {
+		lastColor = ^argb[0]
+	}
+
+	// pixelsPerWord is a power of two: use shift/mask instead of div/mod.
+	wordShift := uint(bits.TrailingZeros(uint(pixelsPerWord)))
+	posMask := pixelsPerWord - 1
+
+	for y := 0; y < height; y++ {
+		srcRow := y * width
+		dstRow := y * packedWidth
+
+		if pixelsPerWord == 1 {
+			// No packing: encode each index in the green channel.
+			for x := 0; x < width; x++ {
+				c := argb[srcRow+x]
+				if c != lastColor {
+					lastColor, lastIdx = c, lookup(c)
+				}
+				packed[dstRow+x] = ARGBBlack | (lastIdx << 8)
+			}
+		} else {
+			// Pack multiple indices into each uint32.
+			bitMask := uint32((1 << bitsPerPixel) - 1)
+			for x := 0; x < width; x++ {
+				c := argb[srcRow+x]
+				if c != lastColor {
+					lastColor, lastIdx = c, lookup(c)
+				}
+				idx := lastIdx & bitMask
+				wordPos := x >> wordShift
+				bitPos := uint((x & posMask) * bitsPerPixel)
+				if bitPos == 0 {
+					packed[dstRow+wordPos] = ARGBBlack
+				}
+				// Pack index bits into the green channel byte position.
+				packed[dstRow+wordPos] |= idx << (8 + bitPos)
+			}
+		}
+	}
+
+	return packed, packedWidth
+}

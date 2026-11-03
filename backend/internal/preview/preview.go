@@ -52,6 +52,7 @@ type Service struct {
 //	7+ processors: 3 large, rest small
 func NewPreviewGenerator(concurrencyLimit int, cacheDir string) *Service {
 	configureImagingParallelism()
+	logWebPDecoder() // fufu: webp_decode.go
 
 	if concurrencyLimit < 1 {
 		concurrencyLimit = 1
