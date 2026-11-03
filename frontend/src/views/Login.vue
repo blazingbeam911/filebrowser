@@ -219,11 +219,10 @@
 </template>
 
 <script>
-import { router } from "@/router";
 import { mutations, state, getters } from "@/store";
 import Prompts from "@/components/prompts/Prompts.vue";
 import { authApi } from "@/api";
-import { initAuth } from "@/utils/auth";
+import { initAuth, loadAfterLogin } from "@/utils/auth";
 import { postLoginRedirectForServer, sanitizePostLoginRedirect } from "@/utils/safeRedirect.js";
 import { globalVars } from "@/utils/constants";
 import { evaluatePasswordPolicy } from "@/utils/passwordPolicy.js";
@@ -425,7 +424,7 @@ export default {
         }
         await authApi.login(this.username, this.password, captcha);
         await initAuth();
-        void router.push({ path: redirect });
+        loadAfterLogin(redirect);
       } catch (e) {
         console.log(e);
         this.inProgress = false;
@@ -481,7 +480,7 @@ export default {
           try {
             await authApi.beginPasskeyLogin(this.username, this.password);
             await initAuth();
-            void router.push({ path: redirect });
+            loadAfterLogin(redirect);
           } catch (passkeyErr) {
             this.error = passkeyErr.message;
             this.inProgress = false;

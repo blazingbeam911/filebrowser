@@ -30,6 +30,10 @@ vi.mock('@/store', () => store);
 vi.mock('@/store/state.ts', () => ({ state: store.state }));
 vi.mock('@/store/mutations.ts', () => ({ mutations: store.mutations }));
 vi.mock('@/router', () => ({ default: router, router }));
+vi.mock('@/utils/auth', async (importOriginal) => ({
+  ...(await importOriginal()),
+  loadAfterLogin: vi.fn(),
+}));
 vi.mock('@/notify', () => ({ notify }));
 vi.mock('@/utils/constants', () => ({ globalVars: { baseURL: '/', recaptcha: false } }));
 vi.mock('@/api/utils', () => ({ fetchJSON: vi.fn(), fetchURL: vi.fn() }));
@@ -40,7 +44,7 @@ vi.mock('@/components/LoadingSpinner.vue', () => ({ default: {} }));
 vi.mock('qrcode.vue', () => ({ default: { render: () => null } }));
 
 import Login from '@/views/Login.vue';
-import { stopSessionKeepAlive } from '@/utils/auth.js';
+import { loadAfterLogin, stopSessionKeepAlive } from '@/utils/auth.js';
 import Totp from './Totp.vue';
 
 const password = 'test password &+%';
@@ -176,7 +180,8 @@ describe('TOTP login and enrollment', () => {
     expect(paths()).toEqual(['/api/auth/login', '/api/users']);
     expect(store.mutations.showPrompt).not.toHaveBeenCalled();
     expect(store.state.user).toEqual(noOtpUser);
-    expect(router.push).toHaveBeenCalledWith({ path: '/files/' });
+    expect(loadAfterLogin).toHaveBeenCalledWith('/files/');
+    expect(router.push).not.toHaveBeenCalled();
   });
 
   it('uses generate and verify before logging in after first-time enforced enrollment', async () => {

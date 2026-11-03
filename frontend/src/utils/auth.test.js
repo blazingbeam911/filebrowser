@@ -22,6 +22,7 @@ vi.mock('@/utils/url.js', () => ({
 import {
   ensureSessionFresh,
   getSessionJwtExpiresAt,
+  loadAfterLogin,
   msUntilRefresh,
   renew,
   SESSION_REFRESH_BEFORE_MS,
@@ -94,6 +95,19 @@ describe('validateLogin session-expiry handling', () => {
     await expect(validateLogin(false)).rejects.toThrow();
     expect(storeMock.mutations.setCurrentUser).not.toHaveBeenCalledWith(null);
     expect(window.location.href).toBe('');
+  });
+});
+
+describe('loadAfterLogin', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('does a full page load of the redirect, so the server renders the user theme', () => {
+    const assign = vi.fn();
+    vi.stubGlobal('location', { assign });
+    loadAfterLogin('/files/photos/?a=1');
+    expect(assign).toHaveBeenCalledWith('/files/photos/?a=1');
   });
 });
 

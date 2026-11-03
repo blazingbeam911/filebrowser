@@ -1,7 +1,7 @@
 import { getters, mutations, state } from "@/store/index.ts";
 import { globalVars } from "@/utils/constants.js";
 import { getApiPath } from "@/utils/url.js";
-import { sanitizeLogoutDestination, sanitizePostLoginRedirect } from "@/utils/safeRedirect.js";
+import { postLoginRedirectForServer, sanitizeLogoutDestination, sanitizePostLoginRedirect } from "@/utils/safeRedirect.js";
 
 /** Session JWT: renew when within 30 minutes of expiry (former X-Renew-Token threshold). */
 export const SESSION_REFRESH_BEFORE_MS = 30 * 60 * 1000;
@@ -235,6 +235,13 @@ export function sessionExpired() {
   const current = window.location.pathname + window.location.search;
   const safeRedirect = sanitizePostLoginRedirect(current, '/files/');
   window.location.href = `${globalVars.baseURL}login?redirect=${encodeURIComponent(safeRedirect)}`;
+}
+
+// Go to the post-login destination with a full page load rather than a router
+// push. The server renders the user's custom theme into index.html, and a page
+// first loaded while logged out (the login page) was rendered without it.
+export function loadAfterLogin(redirect) {
+  window.location.assign(postLoginRedirectForServer(redirect, globalVars.baseURL));
 }
 
 export async function initAuth() {
