@@ -25,6 +25,7 @@ import ListingHeader from "@/components/files/ListingHeader.vue";
 import DuplicateFinderActions from "@/components/tools/DuplicateFinderActions.vue";
 import { getters, state } from "@/store";
 import { eventBus } from "@/store/eventBus";
+import { listingShowsDuration } from "@/utils/durationColumn.js";
 
 export default {
   name: "Shelf",
@@ -75,11 +76,9 @@ export default {
       return getters.currentView() === "listingView";
     },
     hasDuration() {
-      // Check if any file has duration metadata
-      if (!state.req?.items) return false;
-      return state.req.items.some(item =>
-        item.type !== 'directory' && item.metadata?.duration
-      );
+      // fufu: shown from the start for folders with audio/video, not once the first
+      // duration arrives (see utils/durationColumn.js)
+      return listingShowsDuration(state.req?.items);
     },
     showDuplicateFinderActions() {
       // Show duplicate finder actions when on that route and there are selected items

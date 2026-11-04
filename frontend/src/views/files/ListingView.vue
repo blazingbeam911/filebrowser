@@ -204,6 +204,7 @@ import {
   resetTypeAheadSession,
 } from "@/utils/listingTypeAhead.js";
 import { notifyMoveCopyFailure } from "@/utils/appNotifications";
+import { listingShowsDuration } from "@/utils/durationColumn.js";
 
 export default {
   name: "listingView",
@@ -348,10 +349,9 @@ export default {
       return getters.sorting().asc;
     },
     hasDuration() {
-      // Check if any pinned file or regular file has duration metadata
-      return [...this.pinnedItems, ...this.files].some(
-        file => file.type !== "directory" && file.metadata?.duration
-      );
+      // fufu: shown from the start for folders with audio/video, not once the first
+      // duration arrives (see utils/durationColumn.js)
+      return listingShowsDuration([...this.pinnedItems, ...this.files]);
     },
     items() {
       return getters.reqItems();

@@ -11,4 +11,5 @@ var (
 	MediaCache           = cache.NewCache[[]utils.SubtitleTrack](24 * time.Hour) // subtitle track lists from ffprobe
 	SubtitleContentCache = cache.NewCache[string](24 * time.Hour)                // extracted embedded subtitle content
 	MetadataCache        = cache.NewCache[float64](24 * time.Hour)               // media duration from ffprobe
+	ProbeCache           = cache.NewCache[FileProbeInfo](24 * time.Hour)         // fufu: ProbeFile results (duration, codecs)
 )
