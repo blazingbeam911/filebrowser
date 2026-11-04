@@ -243,6 +243,7 @@ import { getters, mutations, state } from '@/store';
 import { getObjectProperty } from '@/utils/object.js';
 import { globalVars } from '@/utils/constants';
 import { getSubtitleFormatExtension } from '@/utils/subtitles';
+import { PLYR_EDITABLE_SELECTOR, isTextEntryTarget } from '@/plyr/plyrKeyTargets';
 import { getPreviewURL, getPreviewURLPublic } from '@/api/resources';
 import {
   blockPlyrSeekOnInput,
@@ -422,6 +423,12 @@ export default {
       videoLoadingCleanup: null,
       querySeekMetadataHandler: null,
       plyrTeardownDone: false,
+      /**
+       * Set first thing in beforeUnmount. A player must never be built after that: it would sit
+       * on a detached <video> with Plyr's global key handler still on window (e.g. f then fails in
+       * Firefox, which allows one fullscreen request per key press).
+       */
+      viewerUnmounted: false,
       /** Inline resume after PiP handoff; applied when the video stream attaches. */
       inlineResumeSnapshot: null,
       /** Seek target passed via Media Fragments URI (#t=) when handing off from PiP. */
@@ -816,6 +823,9 @@ export default {
         seekTime: 10,
         hideControls: true,
         keyboard: { focused: true, global: true },
+        // Sliders (volume) aren't text fields: with Plyr's default `input` here, every shortcut
+        // stopped working once the volume slider had been used, until a click elsewhere.
+        selectors: { editable: PLYR_EDITABLE_SELECTOR },
         tooltips: { controls: true, seek: !this.scrubPreviewEnabled },
         loop: { active: false },
         blankVideo: '',
@@ -860,6 +870,7 @@ export default {
     window.addEventListener('pagehide', this.pagehideHandler);
   },
   beforeUnmount() {
+    this.viewerUnmounted = true;
     // Cleanup timeouts
     for (const timeout of [this.toastTimeout,
     this.skipFeedbackTimer,
@@ -1251,8 +1262,7 @@ export default {
       if (event.repeat) return;
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       const key = event.key.toLowerCase();
-      const target = event.target;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) {
+      if (isTextEntryTarget(event.target)) {
         return;
       }
       // Handle 'P' and 'L' keys for loop and change playback
@@ -1435,24 +1445,24 @@ export default {
       void this.initializePlyr();
     },
     async initializePlyr() {
-      if (!this.mediaElement || this.player) {
+      if (this.viewerUnmounted || !this.mediaElement || this.player) {
         return;
       }
       await this.$nextTick();
-      if (this.player) {
+      if (this.viewerUnmounted || this.player) {
         return;
       }
       void this.mountPlyrPlayer();
     },
     async mountPlyrPlayer() {
-      if (!this.mediaElement || this.player) {
+      if (this.viewerUnmounted || !this.mediaElement || this.player) {
         return;
       }
       this.plyrTeardownDone = false;
       this.mountedPreviewKey = resolvePipMediaKey(this.req?.source, this.req?.path);
       this.pipHandoffApplying = false;
       await this.reconcilePipSessionOnMount();
-      if (this.plyrTeardownDone || !this.mediaElement) return;
+      if (this.viewerUnmounted || this.plyrTeardownDone || !this.mediaElement) return;
       this.player = new Plyr(this.mediaElement, this.plyrOptions);
       if (this.previewType === 'video' && !this.shouldAttachVideoStream) {
         this.nativePlayerPlay = this.player.play.bind(this.player);
