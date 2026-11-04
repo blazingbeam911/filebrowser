@@ -111,6 +111,7 @@ import { endHold, holdMayMove, imageHold, setHoldFast, startHold } from "@/utils
 import { getTypeInfo } from "@/utils/mimetype";
 import { navigationConfig } from "@/utils/navigationConfig.js";
 import { previewRawUrl } from "@/utils/previewRawUrl.js";
+import { isPageKey, navigationKeyDirection } from "@/utils/navigationKeys.js";
 import {
   isInLeftNavHoverZone,
   isInLeftNavTapZone,
@@ -118,8 +119,9 @@ import {
   isInRightNavTapZone,
 } from "@/utils/navigationEdgeZones.js";
 
-function isArrowKey(key) {
-  return key === "ArrowRight" || key === "ArrowLeft";
+/** ← / → or PgUp / PgDn: the keys that move to another file, and whose holds are paced. */
+function isNavigationKey(key) {
+  return navigationKeyDirection(key) !== null;
 }
 
 /** True for an image file the viewer may show (holding an arrow cycles only through these). */
@@ -613,13 +615,14 @@ export default {
         return;
       }
 
-      if (event.repeat && isArrowKey(event.key)) {
+      if (event.repeat && isNavigationKey(event.key)) {
         this.handleHeldArrow(event);
         return;
       }
 
-      // If we're in plyr, only handle arrow keys if Ctrl is pressed
-      if (this.isMediaFile && !event.ctrlKey || event.repeat) {
+      // If we're in plyr, only handle arrow keys if Ctrl is pressed (plain arrows seek there).
+      // PgUp / PgDn change file without Ctrl.
+      if (this.isMediaFile && !event.ctrlKey && !isPageKey(event.key) || event.repeat) {
         return;
       }
       // If we're in the editor, don't handle arrow keys to avoid change of file mistakenly.
@@ -628,16 +631,14 @@ export default {
         return;
       }
 
-      const { key } = event;
-
-      switch (key) {
-        case "ArrowRight":
+      switch (navigationKeyDirection(event.key)) {
+        case "next":
           if (this.hasNext) {
             event.preventDefault();
             void this.next();
           }
           break;
-        case "ArrowLeft":
+        case "previous":
           if (this.hasPrevious) {
             event.preventDefault();
             void this.prev();
@@ -646,7 +647,7 @@ export default {
       }
     },
     /**
-     * An auto-repeated ← / → (the key is held). On an image, moves on once the current image
+     * An auto-repeated ← / → or PgUp / PgDn (the key is held). On an image, moves on once the current image
      * is on screen: in full, or with Shift held as its thumbnail (utils/imageHold.js).
      * Repeats that come too early are dropped, so no image is skipped. On anything else,
      * repeats are ignored as before.
@@ -660,9 +661,10 @@ export default {
       if (state.navigation.isTransitioning || !holdMayMove(previewRawUrl(state.req))) {
         return;
       }
-      if (event.key === "ArrowRight" && this.hasNext) {
+      const direction = navigationKeyDirection(event.key);
+      if (direction === "next" && this.hasNext) {
         void this.next();
-      } else if (event.key === "ArrowLeft" && this.hasPrevious) {
+      } else if (direction === "previous" && this.hasPrevious) {
         void this.prev();
       }
     },
@@ -672,14 +674,14 @@ export default {
      * seek. Released and pressed again, the arrows work as usual on that file.
      */
     holdGuard(event) {
-      if (!event.repeat || !imageHold.active || !isArrowKey(event.key) || isImageFile(state.req)) {
+      if (!event.repeat || !imageHold.active || !isNavigationKey(event.key) || isImageFile(state.req)) {
         return;
       }
       event.preventDefault();
       event.stopImmediatePropagation();
     },
     keyUp(event) {
-      if (isArrowKey(event.key)) {
+      if (isNavigationKey(event.key)) {
         endHold();
       } else if (event.key === "Shift") {
         // Arrow still held: the hold carries on, waiting for full images again.
