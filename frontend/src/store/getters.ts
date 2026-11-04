@@ -10,6 +10,7 @@ import { formatTimestamp, fromNow } from "@/utils/moment.ts";
 import { getNestedProperty, getObjectProperty } from '@/utils/object.js';
 import { buildItemUrl, removeLeadingSlash, removePrefix } from '@/utils/url.js';
 import { defaultDarkMode } from "@/utils/theme.js";
+import { displayPreferenceLookupKeys } from "@/utils/displayPreferenceKey.js";
 import { isMobileLayout } from '@/utils/viewport.js';
 import type { DisplayPreference, FileListItem } from "./types.ts";
 
@@ -19,7 +20,15 @@ export const getters = {
     if (!sourceKey || !path) {
       return null;
     }
-    return (getNestedProperty(state.displayPreferences, sourceKey, path) as DisplayPreference) || null;
+    // fufu: one folder, one set of preferences, however its path is spelled (trailing slash,
+    // escaping); falls back to preferences saved under another spelling before.
+    for (const key of displayPreferenceLookupKeys(path)) {
+      const pref = getNestedProperty(state.displayPreferences, sourceKey, key) as DisplayPreference | undefined;
+      if (pref) {
+        return pref;
+      }
+    }
+    return null;
   },
   eventThemeAvailable: () => {
     if (getters.isShare() || !globalVars.eventBasedThemes) {

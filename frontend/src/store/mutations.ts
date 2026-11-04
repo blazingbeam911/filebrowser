@@ -17,6 +17,7 @@ import { sortedItems } from "@/utils/sort.ts";
 import { isSourceSidebarCategory } from "@/utils/sidebarCategory.ts";
 import { updateManifestLink } from "@/utils/pwaManifest.js";
 import { syncEventTheme } from "@/utils/theme.js";
+import { displayPreferenceKey, displayPreferenceLookupKeys } from "@/utils/displayPreferenceKey.js";
 import {
   cancelCloseUploadPrompt,
   confirmCloseUploadPrompt,
@@ -1109,11 +1110,19 @@ export const mutations = {
     let sourceLevel = getObjectProperty(prefs, source);
     if (!sourceLevel) sourceLevel = {};
 
-    let pathLevel = getObjectProperty(sourceLevel, path) as Record<string, unknown> | undefined;
+    // fufu: save under the folder's canonical key (see displayPreferenceKey.js), starting from
+    // what was saved under any spelling of its path, so other preferences carry over.
+    const key = displayPreferenceKey(path);
+    if (key === null) return;
+    let pathLevel: Record<string, unknown> | undefined;
+    for (const k of displayPreferenceLookupKeys(path)) {
+      pathLevel = getObjectProperty(sourceLevel, k) as Record<string, unknown> | undefined;
+      if (pathLevel) break;
+    }
     if (!pathLevel) pathLevel = {};
 
     const newPathLevel = { ...pathLevel, ...payload };
-    const newSourceLevel = setObjectProperty(sourceLevel, path, newPathLevel);
+    const newSourceLevel = setObjectProperty(sourceLevel, key, newPathLevel);
     prefs = setObjectProperty(prefs, source, newSourceLevel);
     state.displayPreferences = prefs;
 
