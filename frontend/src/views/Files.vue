@@ -27,6 +27,7 @@ import { syncEventTheme } from "@/utils/theme";
 import { isRichTextPreviewMimeType } from "@/utils/mimetype";
 import { invalidateDirMetadataCache } from "@/utils/metadataCache.js";
 import { showShareDownloadPrompt as openShareDownloadPrompt } from "@/utils/download.js";
+import { upFolderHighlightPath } from "@/utils/upFolderHighlight.js";
 
 function directoryListingHasMediaChildren(req) {
   return (
@@ -131,6 +132,7 @@ export default {
       error: null,
       width: window.innerWidth,
       lastPath: "",
+      fetchSeq: 0, // fufu: counts fetchData calls, so a stale one can tell it has been overtaken
       popupSource: "",
       loadingProgress: 0,
       loadingStartTime: null,
@@ -285,6 +287,7 @@ export default {
     },
 
     async fetchData() {
+      const seq = ++this.fetchSeq; // fufu
       const hash = getters.shareHash();
       const isShare = hash !== "";
 
@@ -476,6 +479,8 @@ export default {
           const fetchSource = decodeURIComponent(result.source);
           const fetchPath = decodeURIComponent(result.path);
 
+          // fufu: the listing on screen before this one, to tell whether we're going up
+          const previous = { source: state.req?.source, path: state.req?.path };
           const res = await fetchAuthItemWithParent(fetchSource, fetchPath);
           if (state.sources.count > 1) {
             mutations.setCurrentSource(res.source);
@@ -484,6 +489,14 @@ export default {
           mutations.replaceRequest(res);
           if (res.type !== "directory") {
             state.pendingHighlight = { path: res.path, source: res.source };
+          } else if (seq === this.fetchSeq) {
+            // fufu: going up to a parent folder (any number of levels, any way: Back,
+            // Backspace, Alt+Up, breadcrumbs, double-click) selects and centers the item we
+            // came out of, whatever we did inside it in between.
+            const upPath = upFolderHighlightPath(res.source, res.path, previous.source, previous.path);
+            if (upPath) {
+              state.pendingHighlight = { path: upPath, source: res.source };
+            }
           }
           mutations.setLoading("files", false);
           await this.patchMediaMetadataIfNeeded(res, fetchSource);
@@ -520,7 +533,11 @@ export default {
         }
       }
 
-      void this.highlightPending();
+      // fufu: a fetch overtaken by a newer one (its media metadata came back after we had
+      // moved on) must not use up the pending highlight meant for the newer listing.
+      if (seq === this.fetchSeq) {
+        void this.highlightPending();
+      }
       this.lastPath = state.route.path;
     },
 
