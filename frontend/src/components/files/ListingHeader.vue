@@ -237,41 +237,26 @@ export default {
     showCreatedColumn() {
       return this.isListMode && !this.usePickerSorting && !this.useNavigationSorting && state.user?.showCreationDateColumn;
     },
+    // fufu: the arrow points the way of the sort: up = ascending (A→Z, smallest, oldest,
+    // shortest first), down = descending. An unsorted column shows up, what a click on it
+    // gives (sortArrow).
     nameIcon() {
-      if (this.nameSorted && !this.ascOrdered) {
-        return "arrow_upward";
-      }
-      return "arrow_downward";
+      return this.sortArrow(this.nameSorted);
     },
     sizeIcon() {
-      if (this.sizeSorted && this.ascOrdered) {
-        return "arrow_downward";
-      }
-      return "arrow_upward";
+      return this.sortArrow(this.sizeSorted);
     },
     modifiedIcon() {
-      if (this.modifiedSorted && this.ascOrdered) {
-        return "arrow_downward";
-      }
-      return "arrow_upward";
+      return this.sortArrow(this.modifiedSorted);
     },
     createdIcon() {
-      if (this.createdSorted && this.ascOrdered) {
-        return "arrow_downward";
-      }
-      return "arrow_upward";
+      return this.sortArrow(this.createdSorted);
     },
     kindIcon() {
-      if (this.kindSorted && this.ascOrdered) {
-        return "arrow_downward";
-      }
-      return "arrow_upward";
+      return this.sortArrow(this.kindSorted);
     },
     durationIcon() {
-      if (this.durationSorted && this.ascOrdered) {
-        return "arrow_downward";
-      }
-      return "arrow_upward";
+      return this.sortArrow(this.durationSorted);
     },
     quickDownloadEnabled() {
       if (this.usePickerSorting || this.useNavigationSorting) {
@@ -287,6 +272,10 @@ export default {
     },
   },
   methods: {
+    /** fufu: arrow icon of a column: its direction when sorted, else ascending. */
+    sortArrow(sorted) {
+      return sorted && !this.ascOrdered ? "arrow_downward" : "arrow_upward";
+    },
     /** fufu: the active column's look says where its sort comes from. */
     columnClass(field) {
       const active = this.sortConfig.by === field;
