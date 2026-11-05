@@ -201,3 +201,136 @@ export function sortSourceLabel(t, source, from = null) {
       return t("files.sortSourceDefault");
   }
 }
+
+// fufu: the "Saved sorting options" manager (components/prompts/SortingManager.vue).
+
+/** Sortable columns, in header order, with their label i18n keys. */
+export const COLUMN_LABEL_KEYS = {
+  name: "general.name",
+  size: "general.size",
+  modified: "files.lastModified",
+  kind: "general.type",
+  created: "files.creationTime",
+  duration: "files.duration",
+};
+
+function decodeSegment(segment) {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
+/**
+ * A folder key's path inside its source, decoded: "/files/mysource/photos/2024/" →
+ * "/photos/2024", a share's "/public/share/<hash>/a/" → "/a", a source's root → "/".
+ */
+export function relativeFolderPath(key) {
+  const segments = String(key ?? "").split("/").filter(Boolean);
+  let rest = segments;
+  if (segments[0] === "files") {
+    rest = segments.slice(2);
+  } else if (segments[0] === "public" && segments[1] === "share") {
+    rest = segments.slice(3);
+  }
+  return `/${rest.map(decodeSegment).join("/")}`;
+}
+
+/**
+ * Every saved sorting option in `prefs` (`{ [source]: { [path]: entry } }`), one row per
+ * folder however its path was spelled: `{ id, source, key, rawKeys, path, sorting,
+ * recursive }`, sorted by source, then path (so subfolders follow their parent). Entries
+ * without a sort (view mode only) aren't listed.
+ */
+export function listSavedSortings(prefs) {
+  const rows = [];
+  for (const [source, level] of Object.entries(isEntry(prefs) ? prefs : {})) {
+    if (!isEntry(level)) continue;
+    const byKey = new Map();
+    for (const [rawKey, entry] of Object.entries(level)) {
+      if (!isEntry(entry) || !isSorting(entry.sorting)) continue;
+      const key = displayPreferenceKey(rawKey);
+      if (key === null) continue;
+      const row = byKey.get(key) ?? { id: `${source}\u0000${key}`, source, key, rawKeys: [], path: relativeFolderPath(key), sorting: null, recursive: false };
+      row.rawKeys.push(rawKey);
+      // The canonical spelling wins, as in getters.displayPreferenceFor().
+      if (row.sorting === null || rawKey === key) {
+        row.sorting = { by: entry.sorting.by, asc: entry.sorting.asc !== false };
+        row.recursive = entry.sortingRecursive === true;
+      }
+      byKey.set(key, row);
+    }
+    rows.push(...byKey.values());
+  }
+  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+  return rows.sort((a, b) => collator.compare(a.source, b.source) || collator.compare(a.path, b.path));
+}
+
+/** A case-insensitive RegExp for `query`, or null when it isn't a valid pattern. */
+export function sortingFilterRegex(query) {
+  try {
+    return new RegExp(String(query ?? ""), "i");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Rows whose path contains `query` (case-insensitive), or matches it as a regular expression
+ * with `regex`; all rows for an empty query or an invalid pattern.
+ */
+export function filterSortingRows(rows, query, { regex = false } = {}) {
+  const raw = String(query ?? "");
+  if (raw.trim() === "") return rows;
+  if (regex) {
+    const re = sortingFilterRegex(raw);
+    return re ? rows.filter((row) => re.test(row.path)) : rows;
+  }
+  const q = raw.trim().toLocaleLowerCase();
+  return rows.filter((row) => row.path.toLocaleLowerCase().includes(q));
+}
+
+/**
+ * A source's preferences with one folder's sorting option set: written under the canonical
+ * `key`, the other spellings (`rawKeys`) merged into it (their view mode carries over) and
+ * removed. `recursive` sets or clears the folder's rule. The input isn't modified.
+ */
+export function withSortingAt(sourceLevel, key, rawKeys, { sorting, recursive }) {
+  const result = { ...(isEntry(sourceLevel) ? sourceLevel : {}) };
+  let merged = {};
+  for (const raw of [...rawKeys.filter((k) => k !== key), key]) {
+    if (isEntry(result[raw])) merged = { ...merged, ...result[raw] };
+    if (raw !== key) delete result[raw];
+  }
+  const { sorting: _s, sortingRecursive: _r, ...rest } = merged;
+  result[key] = { ...rest, sorting: { by: sorting.by, asc: sorting.asc }, ...(recursive ? { sortingRecursive: true } : {}) };
+  return result;
+}
+
+/** A source's preferences without the sorting option saved under `rawKeys` (view mode kept). */
+export function withoutSortingAt(sourceLevel, rawKeys) {
+  const result = { ...(isEntry(sourceLevel) ? sourceLevel : {}) };
+  for (const raw of rawKeys) {
+    const entry = result[raw];
+    if (!isEntry(entry)) continue;
+    const { sorting: _s, sortingRecursive: _r, ...rest } = entry;
+    if (Object.keys(rest).length === 0) {
+      delete result[raw];
+    } else {
+      result[raw] = rest;
+    }
+  }
+  return result;
+}
+
+/**
+ * Whether a failed folder request means the folder doesn't exist (the server answers 500
+ * "lstat …: no such file or directory" or "path is not a directory", or 404). Anything else
+ * (permission, an unknown source = 403, network, other errors) says nothing about it.
+ */
+export function isMissingFolderError(status, message) {
+  if (status === 404) return true;
+  if (status !== 500) return false;
+  return /no such file or directory|not a directory/i.test(String(message ?? ""));
+}

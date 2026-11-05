@@ -138,6 +138,7 @@ import UserEditSidebarLinks from "./UserEditSidebarLinks.vue";
 import Quota from "./Quota.vue";
 import NewFileTemplate from "./NewFileTemplate.vue";
 import DefaultViewPrefs from "./DefaultViewPrefs.vue";
+import SortingManager from "./SortingManager.vue"; // fufu
 import { state, getters, mutations } from "@/store";
 import { getObjectProperty, omitObjectProperty, setObjectProperty } from "@/utils/object.js";
 
@@ -198,6 +199,7 @@ export default {
     Quota,
     NewFileTemplate,
     DefaultViewPrefs,
+    SortingManager,
   },
   data() {
     return {

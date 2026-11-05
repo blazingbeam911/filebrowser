@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  filterSortingRows,
+  isMissingFolderError,
+  sortingFilterRegex,
+  listSavedSortings,
+  relativeFolderPath,
+  withoutSortingAt,
+  withSortingAt,
   countAllSorting,
   countSortingUnder,
   findInheritedSorting,
@@ -154,5 +161,65 @@ describe("labels", () => {
     expect(folderNameOfKey("/files/s/Photos/")).toBe("Photos");
     expect(folderNameOfKey("/")).toBe("/");
     expect(folderNameOfKey("/files/s/bad%E0/")).toBe("bad%E0");
+  });
+});
+
+describe("saved sorting options manager", () => {
+  const prefs = {
+    test: {
+      "/files/test/b/": { sorting: by("size", false), sortingRecursive: true, viewMode: "list" },
+      "/files/test/a": { sorting: by("name", false), viewMode: "gallery" }, // old spelling
+      "/files/test/a/": { sorting: by("kind") },
+      "/files/test/a/x%20y/": { sorting: by("modified") },
+      "/files/test/v/": { viewMode: "list" }, // no sort: not listed
+      "/files/test/": { sorting: by("duration") },
+    },
+    abc123: { "/public/share/abc123/sub/": { sorting: by("created", false) } },
+  };
+  it("lists one row per folder, canonical spelling first, sorted by source and path", () => {
+    const rows = listSavedSortings(prefs);
+    expect(rows.map((r) => `${r.source}:${r.path}`)).toEqual(["abc123:/sub", "test:/", "test:/a", "test:/a/x y", "test:/b"]);
+    const a = rows.find((r) => r.path === "/a");
+    expect(a).toMatchObject({ key: "/files/test/a/", sorting: by("kind"), recursive: false });
+    expect(a.rawKeys.sort()).toEqual(["/files/test/a", "/files/test/a/"]);
+    expect(rows.find((r) => r.path === "/b")).toMatchObject({ recursive: true, sorting: by("size", false) });
+    expect(listSavedSortings(undefined)).toEqual([]);
+  });
+  it("gives paths relative to the source or share", () => {
+    expect(relativeFolderPath("/files/mysource/photos/2024/")).toBe("/photos/2024");
+    expect(relativeFolderPath("/files/mysource/")).toBe("/");
+    expect(relativeFolderPath("/public/share/h4sh/a%26b/")).toBe("/a&b");
+  });
+  it("filters by regular expression, case-insensitive; an invalid one filters nothing", () => {
+    const rows = listSavedSortings(prefs);
+    expect(filterSortingRows(rows, "^/A($|/x)", { regex: true }).map((r) => r.path)).toEqual(["/a", "/a/x y"]);
+    expect(filterSortingRows(rows, "a(", { regex: true })).toHaveLength(rows.length);
+    expect(sortingFilterRegex("a(")).toBe(null);
+    expect(filterSortingRows(rows, "^/a$")).toEqual([]); // plain text: no regex
+  });
+  it("filters by path", () => {
+    const rows = listSavedSortings(prefs);
+    expect(filterSortingRows(rows, " X Y").map((r) => r.path)).toEqual(["/a/x y"]);
+    expect(filterSortingRows(rows, "")).toHaveLength(rows.length);
+  });
+  it("sets a folder's sorting under the canonical key, merging other spellings", () => {
+    const level = withSortingAt(prefs.test, "/files/test/a/", ["/files/test/a", "/files/test/a/"], { sorting: by("size"), recursive: true });
+    expect(level["/files/test/a"]).toBeUndefined();
+    expect(level["/files/test/a/"]).toEqual({ viewMode: "gallery", sorting: by("size"), sortingRecursive: true });
+    const off = withSortingAt(prefs.test, "/files/test/b/", ["/files/test/b/"], { sorting: by("size", false), recursive: false });
+    expect(off["/files/test/b/"]).toEqual({ viewMode: "list", sorting: by("size", false) });
+    expect(prefs.test["/files/test/a"]).toEqual({ sorting: by("name", false), viewMode: "gallery" }); // input untouched
+  });
+  it("resets a folder's sorting, keeping its view mode", () => {
+    const level = withoutSortingAt(prefs.test, ["/files/test/a", "/files/test/a/"]);
+    expect(level["/files/test/a"]).toEqual({ viewMode: "gallery" });
+    expect(level["/files/test/a/"]).toBeUndefined();
+  });
+  it("tells a missing folder from other errors", () => {
+    expect(isMissingFolderError(500, '{"message":"lstat /x/nope: no such file or directory"}')).toBe(true);
+    expect(isMissingFolderError(500, "path is not a directory: /a.jpg")).toBe(true);
+    expect(isMissingFolderError(404, "")).toBe(true);
+    expect(isMissingFolderError(403, "no such file or directory")).toBe(false);
+    expect(isMissingFolderError(500, "database is locked")).toBe(false);
   });
 });

@@ -109,17 +109,7 @@
 <script>
 import { state, getters, mutations } from "@/store";
 import SortSourceMenu from "@/components/files/SortSourceMenu.vue";
-import { nextListingSortAsc, OWN_SORT_SOURCES, sortDirectionLabel, sortSourceLabel } from "@/utils/sortSource.js";
-
-/** fufu: column label i18n keys, for the sort menu title's tooltip and the confirmations. */
-const COLUMN_LABEL_KEYS = {
-  name: "general.name",
-  size: "general.size",
-  modified: "files.lastModified",
-  kind: "general.type",
-  created: "files.creationTime",
-  duration: "files.duration",
-};
+import { COLUMN_LABEL_KEYS, nextListingSortAsc, OWN_SORT_SOURCES, sortDirectionLabel, sortSourceLabel } from "@/utils/sortSource.js";
 
 export default {
   name: "ListingHeader",
@@ -194,6 +184,7 @@ export default {
           { action: "reset-recursive", icon: "folder_delete", label: this.$t("files.resetSortRecursively"), disabled: savedHere === 0 },
           { action: "reset", icon: "restart_alt", label: this.$t("files.resetSortToDefault"), disabled: !anythingSaved },
         ],
+        [{ action: "manage", icon: "tune", label: this.$t("files.manageSortingOptions"), disabled: false }],
       ];
     },
     isMobile() {
@@ -370,6 +361,9 @@ export default {
             () => mutations.clearSortingRecursively());
           break;
         }
+        case "manage":
+          mutations.showPrompt({ name: "SortingManager", props: { title: this.$t("files.savedSortingOptions") } });
+          break;
         case "reset": {
           const count = getters.sortingSavedCount();
           const body = [this.$t("files.resetSortBody")];

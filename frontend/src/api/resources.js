@@ -12,6 +12,7 @@ import { adjustedData, fetchURL } from "./utils.ts"
 import { rememberViewToken } from "./viewToken.js"
 import { isMediaFile } from "@/utils/mediaFile.js"
 import { getObjectProperty } from "@/utils/object.js"
+import { isMissingFolderError } from "@/utils/sortSource.js"
 import { getStreamURL, getStreamURLPublic } from "./media.js"
 import { invalidateDirMetadataCache } from '@/utils/metadataCache.js'
 
@@ -161,6 +162,26 @@ export async function listDirectoryEntries(source, path) {
     return new Map(data.items.map((item) => [item.name, { size: item.size, type: item.type }]))
   } catch {
     return null
+  }
+}
+
+/**
+ * fufu: whether a folder still exists, for the saved sorting options manager: true, false
+ * (the server says it's missing) or null (unknown: permission, network, other errors). Lists
+ * only its subfolders, the lightest listing; no error toasts. `hash` = a share's hash.
+ */
+export async function folderExists(source, path, { hash = "", signal } = {}) {
+  try {
+    if (hash) {
+      const res = await fetch(getPublicApiPath('resources/items', { path, hash, only: 'folders' }), { headers: sharePublicAuthHeaders(hash), signal })
+      if (res.ok) return true
+      return isMissingFolderError(res.status, await res.text()) ? false : null
+    }
+    await fetchURL(getApiPath('resources/items', { path, source, only: 'folders' }), { signal })
+    return true
+  } catch (err) {
+    if (err?.name === 'AbortError') return null
+    return isMissingFolderError(err?.status, err?.message) ? false : null
   }
 }
 

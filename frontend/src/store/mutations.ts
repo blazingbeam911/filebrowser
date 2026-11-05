@@ -18,7 +18,7 @@ import { isSourceSidebarCategory } from "@/utils/sidebarCategory.ts";
 import { updateManifestLink } from "@/utils/pwaManifest.js";
 import { syncEventTheme } from "@/utils/theme.js";
 import { displayPreferenceKey, displayPreferenceLookupKeys } from "@/utils/displayPreferenceKey.js";
-import { folderEntry, withoutAllSorting, withoutSortingUnder } from "@/utils/sortSource.js";
+import { folderEntry, withoutAllSorting, withoutSortingAt, withoutSortingUnder, withSortingAt } from "@/utils/sortSource.js";
 import {
   cancelCloseUploadPrompt,
   confirmCloseUploadPrompt,
@@ -1098,6 +1098,27 @@ export const mutations = {
     const cleaned = withoutSortingUnder(getters.displayPreferenceSourceLevel(), path);
     if (cleaned.removed === 0) return;
     setSourceDisplayPreferences(source, cleaned.sourceLevel as Record<string, DisplayPreference>);
+  },
+  /** fufu (manager): set one folder's sorting option and rule flag (SortingManager.vue). */
+  setFolderSorting: ({ source, key, rawKeys, sorting, recursive }: { source: string; key: string; rawKeys: string[]; sorting: { by: string; asc: boolean }; recursive: boolean }) => {
+    const level = (state.displayPreferences as Record<string, Record<string, DisplayPreference>> | undefined)?.[source];
+    setSourceDisplayPreferences(source, withSortingAt(level, key, rawKeys, { sorting, recursive }) as Record<string, DisplayPreference>);
+  },
+  /** fufu (manager): reset the sorting options of several folders ({ source, rawKeys } rows) at once. */
+  resetFolderSortings: (rows: { source: string; rawKeys: string[] }[]) => {
+    let prefs = (state.displayPreferences || {}) as Record<string, Record<string, DisplayPreference>>;
+    for (const { source, rawKeys } of rows) {
+      prefs = setObjectProperty(prefs, source, withoutSortingAt(prefs[source], rawKeys)) as Record<string, Record<string, DisplayPreference>>;
+    }
+    state.displayPreferences = prefs;
+    saveDisplayPreferences();
+    mutations.updateListingItems();
+  },
+  /** fufu (manager): set or reset (null) this browser's global sorting option. */
+  setGlobalSorting: (sorting: { by: string; asc: boolean } | null) => {
+    state.globalSorting = sorting ? { by: sorting.by, asc: sorting.asc } : null;
+    saveGlobalSorting();
+    mutations.updateListingItems();
   },
   /** fufu: every saved folder sort and rule and the global sort go; view modes stay. */
   resetSortingToDefault: () => {
