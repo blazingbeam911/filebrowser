@@ -18,6 +18,7 @@ import { isSourceSidebarCategory } from "@/utils/sidebarCategory.ts";
 import { updateManifestLink } from "@/utils/pwaManifest.js";
 import { syncEventTheme } from "@/utils/theme.js";
 import { displayPreferenceKey, displayPreferenceLookupKeys } from "@/utils/displayPreferenceKey.js";
+import { folderEntry, withoutAllSorting, withoutSortingUnder } from "@/utils/sortSource.js";
 import {
   cancelCloseUploadPrompt,
   confirmCloseUploadPrompt,
@@ -56,6 +57,54 @@ function getSortedNavigationItems(listing: Partial<FileListItem>[], by: string, 
   const items: Partial<FileListItem>[] = sortedItems([...listing], by, asc);
   navigationSortCache = { listing, length: listing.length, by, asc, items };
   return items;
+}
+
+// fufu: per-folder sorts and the global sort (utils/sortSource.js), kept in this browser.
+// Anonymous (share) viewers keep them in memory only, as display preferences always were.
+const GLOBAL_SORTING_KEY = "globalSorting";
+
+function saveDisplayPreferences(): void {
+  if (state.user.username === 'anonymous') return;
+  let allPrefs = JSON.parse(localStorage.getItem("displayPreferences") || "{}");
+  allPrefs = setObjectProperty(allPrefs, state.user.username, state.displayPreferences);
+  localStorage.setItem("displayPreferences", JSON.stringify(allPrefs));
+}
+
+/** Replaces one source's per-folder preferences, saves them and re-sorts the listing. */
+function setSourceDisplayPreferences(source: string, sourceLevel: Record<string, DisplayPreference>): void {
+  state.displayPreferences = setObjectProperty(state.displayPreferences || {}, source, sourceLevel);
+  saveDisplayPreferences();
+  mutations.updateListingItems();
+}
+
+function loadGlobalSorting(username: string): { by: string; asc: boolean } | null {
+  try {
+    const all = JSON.parse(localStorage.getItem(GLOBAL_SORTING_KEY) || "{}");
+    const sorting = all?.[username];
+    if (sorting && typeof sorting.by === "string" && sorting.by !== "") {
+      return { by: sorting.by, asc: sorting.asc !== false };
+    }
+  } catch {
+    // unreadable: no global sort
+  }
+  return null;
+}
+
+function saveGlobalSorting(): void {
+  const username = state.user.username;
+  if (username === 'anonymous') return;
+  let all: Record<string, unknown> = {};
+  try {
+    all = JSON.parse(localStorage.getItem(GLOBAL_SORTING_KEY) || "{}") || {};
+  } catch {
+    all = {};
+  }
+  if (state.globalSorting) {
+    all[username] = state.globalSorting;
+  } else {
+    delete all[username];
+  }
+  localStorage.setItem(GLOBAL_SORTING_KEY, JSON.stringify(all));
 }
 
 const uploadBeforeUnloadHandler = (event: BeforeUnloadEvent) => {
@@ -608,6 +657,8 @@ export const mutations = {
       // Load display preferences for the current user
       const allPreferences = JSON.parse(localStorage.getItem("displayPreferences") || "{}");
       state.displayPreferences = allPreferences[state.user.username] || {};
+      // fufu: and this browser's global sort (utils/sortSource.js)
+      state.globalSorting = loadGlobalSorting(state.user.username);
 
     } catch (_error) {
       // Silently ignore errors when loading preferences
@@ -902,7 +953,10 @@ export const mutations = {
       emitStateChanged();
       return
     }
-    const sorting = getters.sorting();
+    // fufu: the sort of the folder being loaded (state.req is still the previous request:
+    // after a reload of a folder URL without a trailing slash it was taken for a file and
+    // the parent folder's sort was used).
+    const sorting = getters.sorting(value);
     const sortby = sorting.by;
     const asc = sorting.asc;
     // Separate directories and files
@@ -999,12 +1053,59 @@ export const mutations = {
   },
   updateListingSortConfig: ({ field, asc }: { field: string; asc: boolean }) => {
     if (!state.user.sorting) {
-      state.user.sorting = {} as { by: string; asc: boolean };
+      state.user.sorting = { by: "name", asc: true };
     }
-    state.user.sorting.by = field;
-    state.user.sorting.asc = asc;
+    // fufu: the click becomes this folder's sort only (a rule of "Apply recursively" keeps
+    // its flag, so the subfolders follow). It no longer overwrites state.user.sorting, which
+    // made it every other folder's sort until a reload (utils/sortSource.js).
     mutations.updateDisplayPreferences({ sorting: { by: field, asc: asc } });
     emitStateChanged();
+  },
+  /**
+   * fufu: the current sort becomes a rule for this folder and all its subfolders. With
+   * `override`, the sorting options saved inside the folder are reset so the whole tree
+   * follows; without, subfolders with their own keep it.
+   */
+  applySortingRecursively: ({ override = true }: { override?: boolean } = {}) => {
+    const { source, path } = getters.displayPreferenceLocation();
+    const key = displayPreferenceKey(path);
+    if (!source || key === null) return;
+    const sorting = { ...getters.sorting() };
+    const sourceLevel = getters.displayPreferenceSourceLevel() || {};
+    const { sorting: _s, sortingRecursive: _r, ...rest } = (folderEntry(sourceLevel, path) || {}) as DisplayPreference;
+    const cleaned = withoutSortingUnder(sourceLevel, path, { includeDescendants: override }).sourceLevel as Record<string, DisplayPreference>;
+    cleaned[key] = { ...(cleaned[key] || {}), ...rest, sorting, sortingRecursive: true };
+    setSourceDisplayPreferences(source, cleaned);
+  },
+  /** fufu: the current sort becomes this browser's global sort. */
+  applySortingGlobally: () => {
+    state.globalSorting = { ...getters.sorting() };
+    saveGlobalSorting();
+    mutations.updateListingItems();
+  },
+  /** fufu: forget the current folder's own sort (under every spelling), and its rule. */
+  clearFolderSorting: () => {
+    const { source, path } = getters.displayPreferenceLocation();
+    if (!source || !path) return;
+    const cleaned = withoutSortingUnder(getters.displayPreferenceSourceLevel(), path, { includeDescendants: false });
+    if (cleaned.removed === 0) return;
+    setSourceDisplayPreferences(source, cleaned.sourceLevel as Record<string, DisplayPreference>);
+  },
+  /** fufu: forget the sorts and rules of the current folder and every folder under it. */
+  clearSortingRecursively: () => {
+    const { source, path } = getters.displayPreferenceLocation();
+    if (!source || !path) return;
+    const cleaned = withoutSortingUnder(getters.displayPreferenceSourceLevel(), path);
+    if (cleaned.removed === 0) return;
+    setSourceDisplayPreferences(source, cleaned.sourceLevel as Record<string, DisplayPreference>);
+  },
+  /** fufu: every saved folder sort and rule and the global sort go; view modes stay. */
+  resetSortingToDefault: () => {
+    state.displayPreferences = withoutAllSorting(state.displayPreferences).prefs;
+    saveDisplayPreferences();
+    state.globalSorting = null;
+    saveGlobalSorting();
+    mutations.updateListingItems();
   },
   updateNavigationSortConfig: ({ field, asc }: { field: string; asc: boolean }) => {
     state.navigation.sorting = { by: field, asc };

@@ -11,6 +11,7 @@ import { getNestedProperty, getObjectProperty } from '@/utils/object.js';
 import { buildItemUrl, removeLeadingSlash, removePrefix } from '@/utils/url.js';
 import { defaultDarkMode } from "@/utils/theme.js";
 import { displayPreferenceLookupKeys } from "@/utils/displayPreferenceKey.js";
+import { countAllSorting, countSortingUnder, findInheritedSorting, resolveSorting } from "@/utils/sortSource.js";
 import { isMobileLayout } from '@/utils/viewport.js';
 import type { DisplayPreference, FileListItem } from "./types.ts";
 
@@ -94,18 +95,32 @@ export const getters = {
     }
     return true
   },
-  displayPreference: () => {
+  displayPreference: (req: { type?: string } = state.req) => {
+    const { source, path } = getters.displayPreferenceLocation(req);
+    return getters.displayPreferenceFor(source, path);
+  },
+  /**
+   * fufu: the source and folder path the listing's display preferences belong to. `req` is
+   * the request being shown (default: the current one); replaceRequest() passes the incoming
+   * one, as state.req still holds the previous request then.
+   */
+  displayPreferenceLocation: (req: { type?: string } = state.req): { source: string; path: string } => {
     let source = state.sources.current;
     if (getters.isShare()) {
       source = getters.currentHash();
     }
     let path = state.route.path ?? "";
 
-    if (state.req.type !== "directory") {
+    if (req?.type !== "directory") {
       path = path.substring(0, path.lastIndexOf("/") + 1) || "/";
     }
-
-    return getters.displayPreferenceFor(source, path);
+    return { source, path };
+  },
+  /** fufu: the current source's per-folder preferences ({ [path]: DisplayPreference }). */
+  displayPreferenceSourceLevel: (): Record<string, DisplayPreference> | undefined => {
+    const { source } = getters.displayPreferenceLocation();
+    if (!source) return undefined;
+    return (state.displayPreferences as Record<string, Record<string, DisplayPreference>> | undefined)?.[source];
   },
   viewModeChangeLocked: () => {
     if (getters.isAdmin()) {
@@ -139,14 +154,39 @@ export const getters = {
     // Priority 3: Use user's default viewMode
     return state.user?.viewMode || "normal";
   },
-  sorting: () => {
-    const sorting = getters.displayPreference()?.sorting || state.user?.sorting || { by: "name", asc: true };
+  sorting: (req: { type?: string } = state.req) => {
+    // fufu: this folder's own sort, else a parent folder's rule, the global one or name
+    // ascending; see utils/sortSource.js.
+    const { sorting } = getters.sortingResolution(req);
     if ((sorting.by === "kind" && !state.user?.showTypeColumn) ||
         (sorting.by === "created" && !state.user?.showCreationDateColumn)) {
       return { by: "name", asc: sorting.asc };
     }
     return sorting;
   },
+  /** fufu: the listing's sort with its source (utils/sortSource.js): { sorting, source, from }. */
+  sortingResolution: (req: { type?: string } = state.req) => {
+    const own = getters.displayPreference(req);
+    const { path } = getters.displayPreferenceLocation(req);
+    return resolveSorting({
+      own: own?.sorting,
+      ownRecursive: own?.sortingRecursive === true,
+      inherited: findInheritedSorting(getters.displayPreferenceSourceLevel(), path),
+      global: state.globalSorting,
+    });
+  },
+  /** fufu: where the listing's sort comes from: { source, from }. */
+  sortingSource: () => {
+    const { source, from } = getters.sortingResolution();
+    return { source, from };
+  },
+  /** fufu: folders with a saved sort in the current folder (includeSelf) and/or under it. */
+  sortingSavedUnder: (options: { includeSelf?: boolean; includeDescendants?: boolean } = {}) => {
+    const { path } = getters.displayPreferenceLocation();
+    return countSortingUnder(getters.displayPreferenceSourceLevel(), path, options);
+  },
+  /** fufu: folders with a saved sort anywhere, in every source. */
+  sortingSavedCount: () => countAllSorting(state.displayPreferences),
   /** Sort used by nextPrevious and quick jump */
   navigationSorting: () => {
     return state.navigation.sorting || getters.sorting();

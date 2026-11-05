@@ -119,6 +119,8 @@ export const state: StoreState = reactive({
   previewRaw: "",
   oldReq: {},
   pickerSorting: loadPickerSorting(),
+  // fufu: this browser's global sort (utils/sortSource.js), loaded with the user.
+  globalSorting: null,
   clipboard: {
     key: "",
     items: [],

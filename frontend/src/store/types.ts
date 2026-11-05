@@ -100,6 +100,8 @@ export interface DisplayPreference {
     by: string;
     asc: boolean;
   };
+  /** fufu: the sort is a rule for the subfolders too ("Apply recursively", utils/sortSource.js). */
+  sortingRecursive?: boolean;
 }
 
 export interface SidebarLink {
@@ -372,6 +374,11 @@ export interface StoreState {
   oldReq: unknown;
   /** Sort config for destination picker dialogs (copy/move/archive). Independent of the main listing sort. */
   pickerSorting: {
+    by: string;
+    asc: boolean;
+  } | null;
+  /** fufu: this browser's global sort ("Apply globally", utils/sortSource.js). */
+  globalSorting: {
     by: string;
     asc: boolean;
   } | null;
