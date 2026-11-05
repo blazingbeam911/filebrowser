@@ -837,8 +837,10 @@ export default {
 .floating-window > :deep(.card-content) {
   position: relative;
   z-index: 1;
-  padding: 0.5em;
-  padding-top: 3.5em;
+  /* fufu: 1em at the sides (was 0.5em) and 0.5em more under the title bar, so text isn't
+     cramped; the space above the buttons stays as it was, which already matches. */
+  padding: 0.5em 1em;
+  padding-top: 4em;
   padding-bottom: 3.5em;
   margin-top: 1px;
   margin-bottom: 1px;
@@ -850,7 +852,7 @@ export default {
 
 /* No buttons variant - removes bottom padding */
 .floating-window > :deep(.card-content.no-buttons) {
-  padding-bottom: 0.5em;
+  padding-bottom: 1em; /* fufu: was 0.5em */
 }
 
 .floating-window > :deep(.card-content.prompt-panel) {
