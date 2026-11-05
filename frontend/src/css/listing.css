@@ -64,6 +64,17 @@ body.rtl .listing-items {
   contain-intrinsic-block-size: auto calc(max(var(--icon-size), 3.6em) + 1em);
 }
 
+/* fufu: Firefox only (the @supports test matches no other engine): rows are always rendered.
+   A sort moves the rows in the DOM, and Firefox skips a moved content-visibility: auto row
+   for one frame (contents not painted, placeholder size), so the listing blinked on every
+   sort. Without it Firefox loads and scrolls large folders as fast and sorts faster;
+   Chromium, which doesn't blink, keeps auto (it loads and scrolls faster with it). */
+@supports (-moz-appearance: none) {
+  .listing-items .listing-item {
+    content-visibility: visible;
+  }
+}
+
 .listing-item .text {
   padding-left: 0.5em;
   flex: 1;
