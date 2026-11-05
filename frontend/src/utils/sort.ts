@@ -5,6 +5,12 @@ import type { FileListItem } from "@/store/types.ts";
 type SortableItem = Partial<FileListItem>;
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
+// fufu: items equal in the sorted column are ordered by name, always A→Z whichever way the
+// column goes (as Type already did), instead of staying in the order the server sent them.
+function byName(a: SortableItem, b: SortableItem): number {
+  return collator.compare(String(a.name ?? ""), String(b.name ?? ""));
+}
+
 export function sortedItems<T extends SortableItem>(items: T[] = [], sortby = "name", asc = true): T[] {
   return items.sort((a, b) => {
     const aPinned = !!a.pinned;
@@ -27,7 +33,7 @@ export function sortedItems<T extends SortableItem>(items: T[] = [], sortby = "n
       const timeA = Date.parse(a.created ?? "") || 0;
       const timeB = Date.parse(b.created ?? "") || 0;
       if (timeA === timeB) {
-        return 0;
+        return byName(a, b);
       }
       return asc ? timeA - timeB : timeB - timeA;
     }
@@ -37,7 +43,7 @@ export function sortedItems<T extends SortableItem>(items: T[] = [], sortby = "n
       if (rankDiff !== 0) {
         return asc ? rankDiff : -rankDiff;
       }
-      return collator.compare(String(a.name ?? ""), String(b.name ?? ""));
+      return byName(a, b);
     }
 
     if (sortby === "name") {
@@ -49,7 +55,7 @@ export function sortedItems<T extends SortableItem>(items: T[] = [], sortby = "n
     }
 
     if (valueA === valueB) {
-      return 0;
+      return byName(a, b);
     }
 
     // Default sorting for other fields

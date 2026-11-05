@@ -176,4 +176,46 @@ describe('testSort', () => {
     expect(sortedItems([...input], "kind", false).map((i) => i.name)).toEqual(["a.mp4", "b.mp4", "song.mp3", "a.zip"]);
   });
 
+
+  // fufu: name breaks ties, always A→Z.
+  it('orders equal sizes by name A→Z in both directions', () => {
+    const input = [
+      { name: "c.png", size: 10 }, { name: "a.png", size: 10 }, { name: "big", size: 99 }, { name: "B.png", size: 10 },
+    ];
+    expect(sortedItems([...input], "size", true).map((i) => i.name)).toEqual(["a.png", "B.png", "c.png", "big"]);
+    expect(sortedItems([...input], "size", false).map((i) => i.name)).toEqual(["big", "a.png", "B.png", "c.png"]);
+  });
+
+  it('orders equal modified times by name A→Z in both directions', () => {
+    const input = [
+      { name: "z", modified: "2026-01-02T00:00:00Z" }, { name: "y", modified: "2026-01-01T00:00:00Z" },
+      { name: "x", modified: "2026-01-02T00:00:00Z" },
+    ];
+    expect(sortedItems([...input], "modified", true).map((i) => i.name)).toEqual(["y", "x", "z"]);
+    expect(sortedItems([...input], "modified", false).map((i) => i.name)).toEqual(["x", "z", "y"]);
+  });
+
+  it('orders equal creation times by name A→Z in both directions', () => {
+    const input = [
+      { name: "b", created: "2026-01-01T00:00:00Z" }, { name: "a", created: "2026-01-01T00:00:00Z" },
+      { name: "c", created: "2025-01-01T00:00:00Z" },
+    ];
+    expect(sortedItems([...input], "created", true).map((i) => i.name)).toEqual(["c", "a", "b"]);
+    expect(sortedItems([...input], "created", false).map((i) => i.name)).toEqual(["a", "b", "c"]);
+  });
+
+  it('orders equal and missing durations by name A→Z in both directions', () => {
+    const input = [
+      { name: "z.jpg" }, { name: "clip.mp4", metadata: { duration: 5 } }, { name: "a.pdf", metadata: {} },
+      { name: "m.mp4", metadata: { duration: 5 } },
+    ];
+    expect(sortedItems([...input], "duration", true).map((i) => i.name)).toEqual(["a.pdf", "z.jpg", "clip.mp4", "m.mp4"]);
+    expect(sortedItems([...input], "duration", false).map((i) => i.name)).toEqual(["clip.mp4", "m.mp4", "a.pdf", "z.jpg"]);
+  });
+
+  it('keeps Type ties in name order A→Z in both directions', () => {
+    const input = [{ name: "b.mp4", type: "video/mp4" }, { name: "a.mp4", type: "video/mp4" }];
+    expect(sortedItems([...input], "kind", true).map((i) => i.name)).toEqual(["a.mp4", "b.mp4"]);
+    expect(sortedItems([...input], "kind", false).map((i) => i.name)).toEqual(["a.mp4", "b.mp4"]);
+  });
 });
