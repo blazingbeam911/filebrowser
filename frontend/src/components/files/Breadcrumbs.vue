@@ -1,14 +1,16 @@
 <template>
-  <div v-if="items.length > 0" id="breadcrumbs">
+  <!-- fufu: shown in the home folder too; the home crumb names the source (or share). -->
+  <div id="breadcrumbs">
     <ul>
       <li>
-        <router-link :to="base" :aria-label="$t('general.home')" :title="$t('general.home')"
+        <router-link :to="base" :aria-label="homeLabel" :title="homeLabel"
           :class="{ 'droppable-breadcrumb': isDroppable, 'drag-over': dragOverItem?.type === 'home' }"
           @dragenter.prevent="dragEnter($event, homeLink)"
           @dragleave.prevent="dragLeave($event, homeLink)"
           @dragover.prevent="dragOver($event, homeLink)"
           @drop.prevent="drop($event, homeLink)">
           <i class="material-symbols">home</i>
+          <span v-if="homeName" class="breadcrumb-text breadcrumb-home-name">{{ homeName }}</span>
         </router-link>
       </li>
       <li class="item" v-for="(link, index) in items" :key="index">
@@ -40,17 +42,26 @@ import { getObjectProperty } from '@/utils/object.js';
 import { goToItemNotificationButton } from "@/utils/notificationActions";
 import { notifyMoveCopyFailure } from "@/utils/appNotifications";
 
+// fufu: shared folder names by share hash (see updateShareRootName).
+const shareRootNames = new Map();
+function rememberShareRootName(hash, name) {
+  shareRootNames.set(hash, name);
+  return name;
+}
+
 export default {
   name: "breadcrumbs",
   data() {
     return {
       base: "/files/",
       dragOverItem: null, // Track which breadcrumb is being dragged over
+      shareRootName: "", // fufu: the shared folder's name, for the home crumb
     };
   },
   props: ["noLink"],
   mounted() {
     this.updatePaths();
+    this.updateShareRootName();
     window.addEventListener('dragend', this.clearDragState);
   },
   beforeUnmount() {
@@ -62,6 +73,7 @@ export default {
     },
     req() {
       this.updatePaths();
+      this.updateShareRootName();
     },
   },
   computed: {
@@ -73,6 +85,16 @@ export default {
     },
     isDroppable() {
       return getters.sourcePermissions().modify
+    },
+    /** fufu: the home crumb's name: the source, or a share's title, else the shared folder's name. */
+    homeName() {
+      if (getters.isShare()) {
+        return state.shareInfo?.title || this.shareRootName;
+      }
+      return state.req?.source || "";
+    },
+    homeLabel() {
+      return this.homeName ? `${this.$t("general.home")}: ${this.homeName}` : this.$t("general.home");
     },
     homeLink() {
       return {
@@ -133,6 +155,24 @@ export default {
     },
   },
   methods: {
+    /** fufu: the shared folder's name (the share root listing's name; fetched once for a deep link). */
+    async updateShareRootName() {
+      if (!getters.isShare()) {
+        this.shareRootName = "";
+        return;
+      }
+      const hash = getters.shareHash();
+      const req = state.req;
+      if (req?.path === "/" && req.name) {
+        this.shareRootName = rememberShareRootName(hash, req.name);
+        return;
+      }
+      this.shareRootName = shareRootNames.get(hash) || "";
+      if (!this.shareRootName && hash) {
+        const name = await resourcesApi.shareRootName(hash);
+        if (name && getters.shareHash() === hash) this.shareRootName = rememberShareRootName(hash, name);
+      }
+    },
     updatePaths() {
       if (getters.isShare()) {
         this.base = getters.sharePathBase();
@@ -380,6 +420,12 @@ export default {
   border: 1px solid rgb(0 0 0 / 10%);
 }
 
+/* fufu: the home crumb's source/share name, after the icon; long names end in "…". */
+#breadcrumbs ul li a .breadcrumb-home-name {
+  margin-left: 0.4em;
+  max-width: 16em;
+}
+
 #breadcrumbs ul li a .breadcrumb-text {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -410,6 +456,14 @@ export default {
     0% 100%,
     1.275em 50%);
   margin-right: 0;
+}
+
+/* fufu: in a source's home folder the home crumb is the only one (first and last):
+   rounded on both sides, no notch on the left. */
+#breadcrumbs ul li:first-child:last-child a {
+  clip-path: none;
+  padding-left: 1.1em;
+  border-radius: 0.85em;
 }
 
 #breadcrumbs ul li a:hover {

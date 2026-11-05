@@ -1241,6 +1241,21 @@ function sharePublicAuthHeaders(hash) {
   return { "X-SHARE-PASSWORD": encodeURIComponent(password) };
 }
 
+/**
+ * fufu: the name of a share's shared folder (its root listing's name), for the home
+ * breadcrumb; "" when it can't be read. No error toasts.
+ */
+export async function shareRootName(hash) {
+  try {
+    const res = await fetch(getPublicApiPath('resources', { hash, path: '/' }), { headers: sharePublicAuthHeaders(hash) })
+    if (!res.ok) return ""
+    const data = await res.json()
+    return typeof data?.name === "string" ? data.name : ""
+  } catch {
+    return ""
+  }
+}
+
 // Fetch public share data
 /**
  * @param {string} path
