@@ -210,8 +210,8 @@ body.rtl .listing-items {
   border-color: var(--divider);
 }
 
-.listing-items.compact .listing-item:hover,
-.listing-items.list .listing-item:hover {
+:where(:root:not(.fb-cursor-hidden)) .listing-items.compact .listing-item:hover,
+:where(:root:not(.fb-cursor-hidden)) .listing-items.list .listing-item:hover {
   width: 98% !important;
   margin-left: 1% !important;
   padding-left: 0.5em !important;

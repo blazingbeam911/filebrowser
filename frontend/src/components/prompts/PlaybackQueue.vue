@@ -498,7 +498,7 @@ export default {
   border-radius: var(--borderRadius);
 }
 
-.queue-item:hover {
+:where(:root:not(.fb-cursor-hidden)) .queue-item:hover {
   background: var(--hoverOverlay);
 }
 

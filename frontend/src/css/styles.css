@@ -83,16 +83,16 @@
   cursor: pointer;
 }
 
-.clickable:hover,
-.plyr .plyr__control:hover,
-button:hover,
-.action:hover,
+:where(:root:not(.fb-cursor-hidden)) .clickable:hover,
+:where(:root:not(.fb-cursor-hidden)) .plyr .plyr__control:hover,
+:where(:root:not(.fb-cursor-hidden)) button:hover,
+:where(:root:not(.fb-cursor-hidden)) .action:hover,
 .listing-item.drag-hover {
   box-shadow: inset 0 -3em 3em var(--hoverOverlay) !important;
   transform: scale(1.02);
 }
 
-.action:not(:disabled):hover {
+:where(:root:not(.fb-cursor-hidden)) .action:not(:disabled):hover {
     background-color: rgb(0 0 0 / 12%);
 }
 
@@ -261,15 +261,15 @@ button:hover,
 }
 
 .listing-item[aria-selected="true"] .material-symbols-outlined,
-.listing-item:hover .material-symbols-outlined,
+:where(:root:not(.fb-cursor-hidden)) .listing-item:hover .material-symbols-outlined,
 .listing-item.current-item .material-symbols-outlined,
-.tree-node:hover .material-symbols-outlined,
+:where(:root:not(.fb-cursor-hidden)) .tree-node:hover .material-symbols-outlined,
 .tree-node.current-item .material-symbols-outlined,
 .tree-node.drag-over .material-symbols-outlined,
 .tree-node.context-item .material-symbols-outlined,
-.search-entry:hover .material-symbols-outlined,
+:where(:root:not(.fb-cursor-hidden)) .search-entry:hover .material-symbols-outlined,
 .search-entry.current-item .material-symbols-outlined,
-.queue-item:hover .material-symbols-outlined,
+:where(:root:not(.fb-cursor-hidden)) .queue-item:hover .material-symbols-outlined,
 .listing-item.context-item .material-symbols-outlined {
   font-variation-settings: 'FILL' 1;
 }
@@ -402,4 +402,17 @@ button.flat-right.flat-left,
 
 .no-padding {
   padding: 0;
+}
+
+/* fufu: the cursor is hidden while the keyboard is in use and over idle images
+   (utils/cursorHide.js), and in the video player together with its controls, also outside
+   fullscreen (Plyr itself only does it in fullscreen). Hover effects that would make the row
+   under a hidden cursor look selected are gated on the same class. */
+html.fb-cursor-hidden,
+html.fb-cursor-hidden *,
+html.fb-cursor-hidden *::before,
+html.fb-cursor-hidden *::after,
+.plyr.plyr--hide-controls,
+.plyr.plyr--hide-controls * {
+  cursor: none !important;
 }

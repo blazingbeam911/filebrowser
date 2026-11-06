@@ -1053,7 +1053,7 @@ export default {
 }
 
 
-.search-entry:hover {
+:where(:root:not(.fb-cursor-hidden)) .search-entry:hover {
   background-color: var(--hoverOverlay);
   transform: scale(1.01);
   box-shadow: none !important;

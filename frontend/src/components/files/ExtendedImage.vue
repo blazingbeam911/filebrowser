@@ -1,5 +1,5 @@
 <template>
-  <div class="image-ex-container" ref="container" @touchstart="touchStart" @touchmove.prevent="touchMove" @touchend="touchEnd" @dblclick="zoomAuto"
+  <div class="image-ex-container" ref="container" data-cursor-idle-hide @touchstart="touchStart" @touchmove.prevent="touchMove" @touchend="touchEnd" @dblclick="zoomAuto"
     @mousedown="mousedownStart" @mousemove="mouseMove" @mouseup="mouseUp" @wheel="wheelMove">
     <!-- Placeholder: the image's cached listing thumbnail, decoded first and scaled to the
          size the full image will have, shown while the full image loads. -->

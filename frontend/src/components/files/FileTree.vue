@@ -858,7 +858,7 @@ onBeforeUnmount(() => {
   opacity: 0.5;
 }
 
-.tree-node:hover {
+:where(:root:not(.fb-cursor-hidden)) .tree-node:hover {
   background-color: var(--surfaceSecondary);
 }
 

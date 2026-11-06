@@ -6,12 +6,14 @@ import App from "./App.vue";
 import { router } from "./router/index.ts";
 
 import "./css/styles.css";
+import { installCursorHide } from "@/utils/cursorHide.js";
 import { initPwaInstall } from "@/utils/pwaInstall.js";
 import { defaultDarkMode, syncDocumentTheme } from "@/utils/theme.js";
 import { initViewportLayoutListener } from "@/utils/viewport.js";
 
 initPwaInstall();
 initViewportLayoutListener();
+installCursorHide();
 syncDocumentTheme(defaultDarkMode());
 
 const app = createApp(App);
