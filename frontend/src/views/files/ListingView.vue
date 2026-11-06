@@ -205,6 +205,7 @@ import {
 } from "@/utils/listingTypeAhead.js";
 import { notifyMoveCopyFailure } from "@/utils/appNotifications";
 import { listingShowsDuration } from "@/utils/durationColumn.js";
+import { listingEdgeKey } from "@/utils/listingEdgeKeys.js";
 
 export default {
   name: "listingView",
@@ -747,6 +748,32 @@ export default {
         this.scrollSelectedIntoView();
       }
     },
+    // Home / End: select the first or last item and scroll all the way to that end, so the
+    // breadcrumbs and header show at the top. Instant, not smooth: the listing can be long.
+    async selectEdgeItem(edge) {
+      const items = this.allItems;
+      if (items.length > 0) {
+        mutations.resetSelected();
+        mutations.addSelected(items.at(edge === "first" ? 0 : -1).index);
+      }
+      await this.$nextTick();
+      const scroller = document.querySelector("#main");
+      if (!scroller) return;
+      const toEdge = () => {
+        scroller.scrollTo({ top: edge === "first" ? 0 : scroller.scrollHeight, behavior: "instant" });
+        return scroller.scrollTop;
+      };
+      // The listing can still grow while it finishes laying out (seen on a 3000-item folder),
+      // which would leave End short of the bottom: pin it again a few times, unless the user
+      // has scrolled since.
+      let pinned = toEdge();
+      for (const delay of [100, 250, 500]) {
+        setTimeout(() => {
+          if (Math.abs(scroller.scrollTop - pinned) > 1) return;
+          pinned = toEdge();
+        }, delay);
+      }
+    },
     scrollSelectedIntoView() {
       setTimeout(() => {
         const element = document.querySelector(
@@ -815,6 +842,13 @@ export default {
             return;
         }
         // Don't return here - allow other modifier key combinations to propagate
+      }
+
+      const edge = listingEdgeKey(event);
+      if (edge) {
+        event.preventDefault();
+        void this.selectEdgeItem(edge);
+        return;
       }
 
       // Handle key events using a switch statement
