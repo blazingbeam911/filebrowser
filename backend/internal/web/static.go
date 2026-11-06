@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/gtsteffaniak/filebrowser/backend/internal/icons"
@@ -19,6 +20,21 @@ import (
 )
 
 var templateRenderer *TemplateRenderer
+
+// themeColorPattern matches the Theme Color forms the frontend stores: a hex color or a
+// reference to one of its color variables, e.g. #89b4fa or var(--icon-violet).
+var themeColorPattern = regexp.MustCompile(`^(#[0-9A-Fa-f]{3,8}|var\(--[A-Za-z0-9-]+\))$`)
+
+// pageThemeColor is the user's Theme Color, written into the page as --primaryColor on <html>
+// so the first paint already uses it (the app applies the same value once its JS has loaded;
+// until then the page used the default accent, and themes deriving colors from it flashed).
+// Anything not in a known form is dropped.
+func pageThemeColor(color string) template.CSS {
+	if !themeColorPattern.MatchString(color) {
+		return ""
+	}
+	return template.CSS(color)
+}
 
 type TemplateRenderer struct {
 	templates *template.Template
@@ -127,7 +143,9 @@ func handleWithStaticData(w http.ResponseWriter, r *http.Request, d *requestCont
 		versionString = version.Version
 		commitSHAString = version.CommitSHA
 	}
+	userThemeColor := template.CSS("")
 	if d.User != nil && d.User.Username != "anonymous" {
+		userThemeColor = pageThemeColor(d.User.ThemeColor)
 		theme, ok := settings.Config.Frontend.Styling.CustomThemeOptions[d.User.CustomTheme]
 		if ok {
 			userSelectedTheme = theme.CssRaw
@@ -244,6 +262,7 @@ func handleWithStaticData(w http.ResponseWriter, r *http.Request, d *requestCont
 		"title":              title,
 		"customCSS":          template.CSS(settings.Config.Frontend.Styling.CustomCSSRaw),
 		"userSelectedTheme":  template.CSS(userSelectedTheme),
+		"userThemeColor":     userThemeColor,
 		"defaultDarkMode":    settings.DefaultDarkMode(),
 		"lightBackground":    settings.Config.Frontend.Styling.LightBackground,
 		"darkBackground":     settings.Config.Frontend.Styling.DarkBackground,

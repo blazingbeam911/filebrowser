@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" class="{{ if .htmlVars.defaultDarkMode }}dark-mode{{ end }}">
+<html lang="en" class="{{ if .htmlVars.defaultDarkMode }}dark-mode{{ end }}"{{ with .htmlVars.userThemeColor }} style="--primaryColor: {{ . }}"{{ end }}>
 
 <head>
   <meta charset="utf-8">
