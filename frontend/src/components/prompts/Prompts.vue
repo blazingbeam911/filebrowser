@@ -10,6 +10,7 @@
         'blocked': isBlocked(prompt),
         'prompt-open-flash': flashBorderIds[prompt.id],
         'editor-prompt': isEditorPrompt(prompt),
+        'is-maximized': Boolean(maximized[prompt.id]), // fufu
       }"
       @mousedown="makeTopPrompt(prompt.id)"
       @contextmenu="isBlocked(prompt) && $event.preventDefault()"
@@ -28,6 +29,7 @@
         :class="{ 'is-dragging': isDragging(prompt.id), 'prompt-close-right': promptRightCloseButton }"
         @mousedown="onPointerDown($event, prompt.id, 'mouse')"
         @touchstart.passive="onPointerDown($event, prompt.id, 'touch')"
+        @dblclick="onTaskbarDblClick($event, prompt.id)"
       >
         <button
           type="button"
@@ -218,6 +220,8 @@ export default {
         clientX: 0,
         clientY: 0,
       },
+      /** fufu: id → { size, offset } to restore, while a window is maximized (title double-click). */
+      maximized: {},
       /** Prompt ids that should play the border highlight (cleared after animation). */
       flashBorderIds: {},
       flashBorderTimers: {},
@@ -288,6 +292,12 @@ export default {
 
       for (const prompt of this.prompts) {
         const size = this.sizes[prompt.id];
+        if (getObjectProperty(this.maximized, prompt.id)) {
+          // fufu: a maximized window keeps filling the page.
+          this.sizes = setObjectProperty(this.sizes, prompt.id, this.maximizedSize());
+          this.dragOffsets = setObjectProperty(this.dragOffsets, prompt.id, { x: 0, y: 0 });
+          continue;
+        }
         if (size) {
           if (size.width > maxWidth || size.height > maxHeight) {
             this.sizes[prompt.id] = {
@@ -481,6 +491,39 @@ export default {
       this.touchIds = omitObjectProperty(this.touchIds, id);
       this.draggingIds.delete(id);
       this.sizes = omitObjectProperty(this.sizes, id);
+      this.maximized = omitObjectProperty(this.maximized, id); // fufu
+    },
+    /** fufu: the size of a maximized window: the page, less a small margin all round. */
+    maximizedSize() {
+      const margin = Math.min(16, Math.round(window.innerWidth * 0.02));
+      return {
+        width: Math.max(200, window.innerWidth - 2 * margin),
+        height: Math.max(150, window.innerHeight - 2 * margin),
+      };
+    },
+    /**
+     * fufu: double-clicking a window's title bar maximizes it (fills the page, less a small
+     * margin); doing it again restores the size and position it had before.
+     */
+    onTaskbarDblClick(event, id) {
+      if (event.target.closest?.("button, svg")) return;
+      const restore = getObjectProperty(this.maximized, id);
+      if (restore) {
+        this.maximized = omitObjectProperty(this.maximized, id);
+        this.sizes = restore.size ? setObjectProperty(this.sizes, id, restore.size) : omitObjectProperty(this.sizes, id);
+        this.dragOffsets = setObjectProperty(this.dragOffsets, id, restore.offset || { x: 0, y: 0 });
+        this.$nextTick(() => {
+          const el = this.getPromptElement(id);
+          if (el) this.clampDragOffset(id, el);
+        });
+        return;
+      }
+      this.maximized = setObjectProperty(this.maximized, id, {
+        size: getObjectProperty(this.sizes, id) || null,
+        offset: getObjectProperty(this.dragOffsets, id) || null,
+      });
+      this.sizes = setObjectProperty(this.sizes, id, this.maximizedSize());
+      this.dragOffsets = setObjectProperty(this.dragOffsets, id, { x: 0, y: 0 });
     },
     /**
      * Escape closes the top prompt. Enter clicks the last `.card-actions` button (far right in DOM).
@@ -662,6 +705,8 @@ export default {
         ? windows.find(w => w?.getAttribute('aria-label') === `${this.prompts.find(p => p.id === id)?.name}-prompt`)
         : windows;
       if (!el) return;
+      // fufu: resizing a maximized window makes its new size the normal one.
+      this.maximized = omitObjectProperty(this.maximized, id);
       // Capture current size (if not already fixed, set it)
       let sizes = this.sizes;
       const existingSize = getObjectProperty(sizes, id);
@@ -809,6 +854,12 @@ export default {
   flex-direction: column;
   overflow: hidden;
   color: var(--textPrimary);
+}
+
+/* fufu: thin scrollbars in pop-up windows. */
+.floating-window,
+.floating-window :deep(*) {
+  scrollbar-width: thin;
 }
 
 @keyframes show {
