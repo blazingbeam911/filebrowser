@@ -11,6 +11,7 @@
         'prompt-open-flash': flashBorderIds[prompt.id],
         'editor-prompt': isEditorPrompt(prompt),
         'is-maximized': Boolean(maximized[prompt.id]), // fufu
+        'wide-prompt': prompt.name === 'SortingManager', // fufu: room for long folder paths
       }"
       @mousedown="makeTopPrompt(prompt.id)"
       @contextmenu="isBlocked(prompt) && $event.preventDefault()"
@@ -854,6 +855,11 @@ export default {
   flex-direction: column;
   overflow: hidden;
   color: var(--textPrimary);
+}
+
+/* fufu: wider windows (the saved sorting options manager), still at most 90% of the page. */
+.floating-window.wide-prompt {
+  max-width: 56em;
 }
 
 /* fufu: thin scrollbars in pop-up windows. */

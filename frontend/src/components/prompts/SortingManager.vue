@@ -304,6 +304,14 @@ export default {
   min-height: 0;
 }
 
+/* The list takes the window's remaining height and scrolls by itself, so a bigger (or
+   maximized) window shows more rows while the search and toolbar stay put. */
+.sorting-manager > .sorting-manager-search,
+.sorting-manager > .sorting-manager-toolbar,
+.sorting-manager > .sorting-manager-empty {
+  flex-shrink: 0;
+}
+
 .sorting-manager-search {
   position: relative;
   display: flex;
@@ -368,8 +376,16 @@ export default {
 }
 
 .sorting-manager-list {
-  max-height: 50vh;
+  flex: 1 1 auto;
+  min-height: 3em;
   overflow-y: auto;
+  /* Rows stack by the list's own width (the window's), not the page's. */
+  container-type: inline-size;
+  /* The list reaches into the window's side padding, so its scrollbar sits at the window's
+     edge, clear of the reset buttons; the rows stay within a few pixels of the search box's
+     edge whether a (thin) scrollbar shows or not. */
+  margin-right: -1em;
+  padding-right: 0.75em;
 }
 
 /* The header text, its divider and the first row's controls sit equally far apart
@@ -433,7 +449,7 @@ export default {
   gap: 0.4em;
 }
 
-@media (max-width: 600px) {
+@container (max-width: 500px) {
   .sorting-manager-controls {
     grid-column: 2 / 4;
   }
