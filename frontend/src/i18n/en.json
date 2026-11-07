@@ -213,7 +213,9 @@
     "connection": "The server can't be reached.",
     "shareNotFound": "Invalid or expired share.",
     "failedToConnectToServer": "Failed to connect to the server, is it still running?",
-    "requestTimedOut": "The request timed out. Check your network or reverse proxy settings."
+    "requestTimedOut": "The request timed out. Check your network or reverse proxy settings.",
+    "proxyTimeout": "The server took too long to answer ({error}). If this was a long task, such as a search over a large folder, try a smaller one.",
+    "errorPage": "The server answered with an error page ({error})."
   },
   "files": {
     "emptyFile": "Empty file",
@@ -1227,7 +1229,7 @@
     "hardlinkSetTag": "Hardlink (Set {letter}) · {links} links",
     "hardlinkExternalTag": "Hardlink (External) · {links} links",
     "hiddenNoSavings": "Hidden, no space to free{suffix}",
-    "hiddenNoSavingsTitle": "Groups where every file also has hardlinks outside the results: deleting from these results would free no space.",
+    "hiddenNoSavingsTitle": "Groups where deleting from these results would free no space: paths that are all hardlinks to one file, or files that all also have hardlinks outside the results.",
     "otherLinks": "Other links:",
     "otherLinksMore": "+{count} more",
     "otherLinksNotFound": "{count} not found",

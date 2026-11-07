@@ -68,7 +68,8 @@ type checksumGroup struct {
 
 type duplicateResponse struct {
 	Groups []duplicateGroup `json:"groups"`
-	// Groups left out because every file in them also has hard links outside the results.
+	// Groups left out because deleting their listed paths would free nothing: paths that are
+	// all hard links to one file, or files that all also have hard links outside the results.
 	HiddenNoSavings int    `json:"hiddenNoSavings,omitempty"`
 	Incomplete      bool   `json:"incomplete,omitempty"`
 	Reason          string `json:"reason,omitempty"`
@@ -96,6 +97,33 @@ type duplicateProcessingStats struct {
 	stopReason          string
 	uniqueChecksums     map[string]bool // Track unique checksums to monitor cache growth
 	hiddenNoSavings     int             // groups left out: deleting their listed paths frees nothing
+	// linksOnly holds files whose paths formed a name group of their own: hard links to one
+	// file, nothing to free. Counted as hidden unless the file is in a reported group anyway.
+	linksOnly map[fileID]bool
+	// Time spent per phase, for the summary log line.
+	sqlTime, fileIDTime, checksumTime, otherLinksTime time.Duration
+}
+
+// checkStop reports whether the search must stop, recording and logging the reason the first
+// time a limit is hit; once stopped, it stays stopped.
+func (s *duplicateProcessingStats) checkStop() bool {
+	if s.stopped {
+		return true
+	}
+	if stop, reason := s.shouldStop(); stop {
+		s.stopped = true
+		s.stopReason = reason
+		logger.Warningf("[Duplicates] Stopping early: %s", reason)
+		return true
+	}
+	return false
+}
+
+// timings formats the time spent per phase for the summary log line.
+func (s *duplicateProcessingStats) timings() string {
+	return fmt.Sprintf("sql %v, file ids %v, checksums %v, other links %v",
+		s.sqlTime.Round(time.Millisecond), s.fileIDTime.Round(time.Millisecond),
+		s.checksumTime.Round(time.Millisecond), s.otherLinksTime.Round(time.Millisecond))
 }
 
 // shouldStop checks if processing should stop due to resource limits
@@ -258,8 +286,11 @@ func duplicatesHandler(w http.ResponseWriter, r *http.Request, d *Context) (int,
 	// Log resource usage for monitoring
 	uniqueChecksumCount := len(stats.uniqueChecksums)
 	if stats.stopped {
-		logger.Warningf("[Duplicates] Search stopped early: %s (scanned %d files, %d checksum ops, %d unique checksums, %d groups in %v)",
-			stats.stopReason, stats.filesScanned, stats.checksumOperations, uniqueChecksumCount, stats.sizeGroupsProcessed, time.Since(stats.startTime))
+		logger.Warningf("[Duplicates] Search stopped early: %s (scanned %d files, %d checksum ops, %d unique checksums, %d groups in %v; %s)",
+			stats.stopReason, stats.filesScanned, stats.checksumOperations, uniqueChecksumCount, stats.sizeGroupsProcessed, time.Since(stats.startTime), stats.timings())
+	} else {
+		logger.Infof("[Duplicates] Search done: %d groups, %d hidden (scanned %d files, %d checksum ops, %d size groups in %v; %s)",
+			len(duplicateGroups), stats.hiddenNoSavings, stats.filesScanned, stats.checksumOperations, stats.sizeGroupsProcessed, time.Since(stats.startTime), stats.timings())
 	}
 
 	// Build response with metadata about completeness
@@ -290,7 +321,9 @@ func findDuplicatesInIndex(index *indexing.Index, opts *duplicatesOptions, stats
 	// Step 1: Query IndexDB for size groups with 2+ files (already sorted by SQL)
 	// Pass the scope prefix for efficient filtering
 	pathPrefix := opts.combinedPath
+	sqlStart := time.Now()
 	sizes, _, err := indexDB.GetSizeGroupsForDuplicates(opts.source, opts.minSize, pathPrefix)
+	stats.sqlTime += time.Since(sqlStart)
 	if err != nil {
 		logger.Errorf("[Duplicates] Failed to query size groups: %v", err)
 		return []duplicateGroup{}
@@ -310,10 +343,7 @@ func findDuplicatesInIndex(index *indexing.Index, opts *duplicatesOptions, stats
 	// Process sizes in batches
 	for batchStart := 0; batchStart < len(sizes); batchStart += bulkSizeQueryLimit {
 		// Check resource limits before processing each batch
-		if shouldStop, reason := stats.shouldStop(); shouldStop {
-			stats.stopped = true
-			stats.stopReason = reason
-			logger.Warningf("[Duplicates] Stopping early: %s", reason)
+		if stats.checkStop() {
 			break
 		}
 
@@ -335,6 +365,7 @@ func findDuplicatesInIndex(index *indexing.Index, opts *duplicatesOptions, stats
 		filesBySize, err := indexDB.GetFilesForMultipleSizes(opts.source, sizeBatch, pathPrefix)
 		bulkQueryDuration := time.Since(bulkQueryStart)
 		totalBulkQueryTime += bulkQueryDuration
+		stats.sqlTime += bulkQueryDuration
 		bulkQueryCount++
 
 		if err != nil {
@@ -374,10 +405,7 @@ func findDuplicatesInIndex(index *indexing.Index, opts *duplicatesOptions, stats
 				}
 
 				// Check resource limits
-				if shouldStop, reason := stats.shouldStop(); shouldStop {
-					stats.stopped = true
-					stats.stopReason = reason
-					logger.Warningf("[Duplicates] Stopping early: %s", reason)
+				if stats.checkStop() {
 					break
 				}
 
@@ -400,8 +428,15 @@ func findDuplicatesInIndex(index *indexing.Index, opts *duplicatesOptions, stats
 
 					// One representative per distinct file: hard links to one file aren't
 					// duplicates of each other, and only one of their paths needs reading.
+					idStart := time.Now()
 					reps, members := collapseHardlinks(fileGroup, index.Path, links)
+					stats.fileIDTime += time.Since(idStart)
 					if len(reps) < 2 {
+						if len(reps) == 1 && len(members[reps[0]]) > 1 {
+							if info := links[filepath.Join(index.Path, reps[0].Path)]; info.ok {
+								stats.markLinksOnly(info.id)
+							}
+						}
 						continue
 					}
 
@@ -419,17 +454,16 @@ func findDuplicatesInIndex(index *indexing.Index, opts *duplicatesOptions, stats
 					}
 
 					// Check resource limits before expensive checksum operations
-					if shouldStop, reason := stats.shouldStop(); shouldStop {
-						stats.stopped = true
-						stats.stopReason = reason
-						logger.Warningf("[Duplicates] Stopping early during checksum phase: %s", reason)
+					if stats.checkStop() {
 						break
 					}
 
 					// Verify with checksums using 3-pass progressive verification
 					// At this point, files match on: size + MIME type + fuzzy filename similarity (50%+)
 					// Large fuzzy groups (>10 files) are skipped above to avoid expensive false positives
+					checksumStart := time.Now()
 					verifiedGroups := groupFilesByChecksum(reps, index, size, stats)
+					stats.checksumTime += time.Since(checksumStart)
 
 					// Create SearchResult objects and track checksums for merging
 					for _, checksumGroup := range verifiedGroups {
@@ -484,8 +518,9 @@ func findDuplicatesInIndex(index *indexing.Index, opts *duplicatesOptions, stats
 				}
 			}
 
-			// Break out of size loop if we hit group limit
-			if len(groupsWithChecksums) >= maxGroups {
+			// Break out of size loop if we hit group limit, or once a resource limit stopped
+			// the search (without this, every remaining size would check and log again)
+			if len(groupsWithChecksums) >= maxGroups || stats.stopped {
 				break
 			}
 
@@ -530,7 +565,10 @@ func findDuplicatesInIndex(index *indexing.Index, opts *duplicatesOptions, stats
 			Files:          files,
 		})
 	}
+	stats.hiddenNoSavings += linksOnlyHidden(stats.linksOnly, mergedGroups)
+	otherStart := time.Now()
 	findOtherLinks(index, opts, duplicateGroups, gaps, links)
+	stats.otherLinksTime += time.Since(otherStart)
 
 	// Groups are already sorted by size (largest to smallest) from SQL query
 	return duplicateGroups

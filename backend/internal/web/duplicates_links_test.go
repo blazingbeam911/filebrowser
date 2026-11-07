@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gtsteffaniak/filebrowser/backend/pkg/indexing"
 	"github.com/gtsteffaniak/filebrowser/backend/pkg/indexing/iteminfo"
@@ -295,5 +296,33 @@ func TestFreeableCopies(t *testing.T) {
 		if got := freeableCopies(c.distinct, c.external); got != c.want {
 			t.Errorf("freeableCopies(%d, %d) = %d, want %d", c.distinct, c.external, got, c.want)
 		}
+	}
+}
+
+func TestLinksOnlyHidden(t *testing.T) {
+	a := fileID{dev: 1, ino: 1}
+	b := fileID{dev: 1, ino: 2}
+	c := fileID{dev: 1, ino: 3}
+	groups := []duplicateGroupWithChecksums{{Links: []linkInfo{{id: b, ok: true}, {id: c, ok: true}}}}
+	if got := linksOnlyHidden(map[fileID]bool{a: true, b: true}, groups); got != 1 {
+		t.Fatalf("linksOnlyHidden = %d, want 1 (b is in a reported group)", got)
+	}
+	if got := linksOnlyHidden(nil, groups); got != 0 {
+		t.Fatalf("linksOnlyHidden(nil) = %d, want 0", got)
+	}
+}
+
+func TestCheckStopLogsOnce(t *testing.T) {
+	s := &duplicateProcessingStats{startTime: time.Now().Add(-2 * maxProcessingTime)}
+	if !s.checkStop() || !s.stopped || s.stopReason == "" {
+		t.Fatal("past the time limit, checkStop must stop and record the reason")
+	}
+	reason := s.stopReason
+	s.startTime = time.Now()
+	if !s.checkStop() || s.stopReason != reason {
+		t.Fatal("once stopped, checkStop stays stopped and keeps the first reason")
+	}
+	if (&duplicateProcessingStats{startTime: time.Now()}).checkStop() {
+		t.Fatal("within limits, checkStop must not stop")
 	}
 }

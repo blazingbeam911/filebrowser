@@ -40,7 +40,9 @@
     "connection": "No se puede conectar al servidor.",
     "shareNotFound": "No pudimos encontrar lo que buscas, quizá el enlace expiró",
     "failedToConnectToServer": "No se pudo conectar con el servidor",
-    "requestTimedOut": "La solicitud ha superado el tiempo de espera. Comprueba la configuración de tu red o del proxy inverso."
+    "requestTimedOut": "La solicitud ha superado el tiempo de espera. Comprueba la configuración de tu red o del proxy inverso.",
+    "proxyTimeout": "The server took too long to answer ({error}). If this was a long task, such as a search over a large folder, try a smaller one.",
+    "errorPage": "The server answered with an error page ({error})."
   },
   "files": {
     "sortByCreationTime": "Ordenar por fecha de creación",
@@ -1178,7 +1180,7 @@
     "hardlinkSetTag": "Hardlink (Set {letter}) · {links} links",
     "hardlinkExternalTag": "Hardlink (External) · {links} links",
     "hiddenNoSavings": "Hidden, no space to free{suffix}",
-    "hiddenNoSavingsTitle": "Groups where every file also has hardlinks outside the results: deleting from these results would free no space.",
+    "hiddenNoSavingsTitle": "Groups where deleting from these results would free no space: paths that are all hardlinks to one file, or files that all also have hardlinks outside the results.",
     "otherLinks": "Other links:",
     "otherLinksMore": "+{count} more",
     "otherLinksNotFound": "{count} not found",

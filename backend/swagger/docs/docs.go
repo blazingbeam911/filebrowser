@@ -8806,7 +8806,7 @@ const docTemplate = `{
                     }
                 },
                 "hiddenNoSavings": {
-                    "description": "Groups left out because every file in them also has hard links outside the results.",
+                    "description": "Groups left out because deleting their listed paths would free nothing: paths that are\nall hard links to one file, or files that all also have hard links outside the results.",
                     "type": "integer"
                 },
                 "incomplete": {

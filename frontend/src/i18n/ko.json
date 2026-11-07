@@ -40,7 +40,9 @@
     "connection": "서버에 연결할 수 없습니다.",
     "shareNotFound": "유효하지 않거나 만료된 공유입니다.",
     "failedToConnectToServer": "서버에 연결하지 못했는데 서버가 아직 실행 중인가요?",
-    "requestTimedOut": "요청이 시간 초과되었습니다. 네트워크 또는 리버스 프록시 설정을 확인해 주세요."
+    "requestTimedOut": "요청이 시간 초과되었습니다. 네트워크 또는 리버스 프록시 설정을 확인해 주세요.",
+    "proxyTimeout": "The server took too long to answer ({error}). If this was a long task, such as a search over a large folder, try a smaller one.",
+    "errorPage": "The server answered with an error page ({error})."
   },
   "files": {
     "sortByCreationTime": "생성 시간순 정렬",
@@ -1178,7 +1180,7 @@
     "hardlinkSetTag": "Hardlink (Set {letter}) · {links} links",
     "hardlinkExternalTag": "Hardlink (External) · {links} links",
     "hiddenNoSavings": "Hidden, no space to free{suffix}",
-    "hiddenNoSavingsTitle": "Groups where every file also has hardlinks outside the results: deleting from these results would free no space.",
+    "hiddenNoSavingsTitle": "Groups where deleting from these results would free no space: paths that are all hardlinks to one file, or files that all also have hardlinks outside the results.",
     "otherLinks": "Other links:",
     "otherLinksMore": "+{count} more",
     "otherLinksNotFound": "{count} not found",

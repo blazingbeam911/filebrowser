@@ -32,7 +32,7 @@ vi.mock('@/utils/constants', () => {
   };
 });
 
-import { adjustedData } from "./utils.ts";
+import { adjustedData, readableErrorBody } from "./utils.ts";
 
 describe('adjustedData', () => {
   it('should append the URL and process directory data correctly', () => {
@@ -128,4 +128,29 @@ describe('adjustedData', () => {
     ]);
   });
 
+});
+
+describe('readableErrorBody', () => {
+  const proxyPage = '<html>\r\n<head><title>504 Gateway Time-out</title></head>\r\n<body>\r\n<center><h1>504 Gateway Time-out</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n';
+
+  it('turns a proxy timeout page into a short message with its title', () => {
+    const msg = readableErrorBody(proxyPage, 504, 'text/html');
+    expect(msg).toContain('504 Gateway Time-out');
+    expect(msg).toContain('took too long');
+    expect(msg).not.toContain('<');
+  });
+
+  it('recognises an HTML page without a content type', () => {
+    expect(readableErrorBody(proxyPage.replace(/504 Gateway Time-out/g, '502 Bad Gateway'), 502, null)).toContain('error page (502 Bad Gateway)');
+  });
+
+  it('falls back to the status when the page has no title', () => {
+    expect(readableErrorBody('<html><body>oops</body></html>', 500, 'text/html; charset=utf-8')).toContain('(HTTP 500)');
+  });
+
+  it('leaves the server\'s own messages alone', () => {
+    const body = 'duplicate search is not available while indexing is in progress';
+    expect(readableErrorBody(body, 503, 'text/plain; charset=utf-8')).toBe(body);
+    expect(readableErrorBody('{"message":"forbidden"}', 403, 'application/json')).toBe('{"message":"forbidden"}');
+  });
 });

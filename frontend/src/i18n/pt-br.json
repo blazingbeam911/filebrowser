@@ -40,7 +40,9 @@
     "connection": "O servidor não pode ser alcançado.",
     "shareNotFound": "Compartilhamento inválido ou expirado.",
     "failedToConnectToServer": "Falha ao conectar-se ao servidor, ele ainda está em execução?",
-    "requestTimedOut": "A solicitação atingiu o tempo limite. Verifique as configurações da sua rede ou do proxy reverso."
+    "requestTimedOut": "A solicitação atingiu o tempo limite. Verifique as configurações da sua rede ou do proxy reverso.",
+    "proxyTimeout": "The server took too long to answer ({error}). If this was a long task, such as a search over a large folder, try a smaller one.",
+    "errorPage": "The server answered with an error page ({error})."
   },
   "files": {
     "sortByCreationTime": "Ordenar por data de criação",
@@ -1178,7 +1180,7 @@
     "hardlinkSetTag": "Hardlink (Set {letter}) · {links} links",
     "hardlinkExternalTag": "Hardlink (External) · {links} links",
     "hiddenNoSavings": "Hidden, no space to free{suffix}",
-    "hiddenNoSavingsTitle": "Groups where every file also has hardlinks outside the results: deleting from these results would free no space.",
+    "hiddenNoSavingsTitle": "Groups where deleting from these results would free no space: paths that are all hardlinks to one file, or files that all also have hardlinks outside the results.",
     "otherLinks": "Other links:",
     "otherLinksMore": "+{count} more",
     "otherLinksNotFound": "{count} not found",

@@ -40,7 +40,9 @@
     "connection": "Немає підключення до сервера.",
     "shareNotFound": "Недійсна або прострочена акція.",
     "failedToConnectToServer": "Не вдалося підключитися до сервера, він все ще працює?",
-    "requestTimedOut": "Запит завершився через перевищення ліміту часу. Перевірте налаштування мережі або зворотного проксі-сервера."
+    "requestTimedOut": "Запит завершився через перевищення ліміту часу. Перевірте налаштування мережі або зворотного проксі-сервера.",
+    "proxyTimeout": "The server took too long to answer ({error}). If this was a long task, such as a search over a large folder, try a smaller one.",
+    "errorPage": "The server answered with an error page ({error})."
   },
   "files": {
     "sortByCreationTime": "Сортувати за часом створення",
@@ -1178,7 +1180,7 @@
     "hardlinkSetTag": "Hardlink (Set {letter}) · {links} links",
     "hardlinkExternalTag": "Hardlink (External) · {links} links",
     "hiddenNoSavings": "Hidden, no space to free{suffix}",
-    "hiddenNoSavingsTitle": "Groups where every file also has hardlinks outside the results: deleting from these results would free no space.",
+    "hiddenNoSavingsTitle": "Groups where deleting from these results would free no space: paths that are all hardlinks to one file, or files that all also have hardlinks outside the results.",
     "otherLinks": "Other links:",
     "otherLinksMore": "+{count} more",
     "otherLinksNotFound": "{count} not found",

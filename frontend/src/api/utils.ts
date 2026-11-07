@@ -75,9 +75,24 @@ export async function fetchURL(
 
   // Session JWT renew is handled by utils/auth session keep-alive (not per-request headers).
   if (res.status < 200 || res.status > 299) {
-    throw new HttpError(await res.text(), res.status);
+    throw new HttpError(readableErrorBody(await res.text(), res.status, res.headers.get("Content-Type")), res.status);
   }
   return res;
+}
+
+// An error answered with an HTML page, typically by a reverse proxy in front of the server
+// (e.g. 502 or 504), becomes a short message naming the page's title instead of its markup.
+// Other error bodies (the server's own messages) are returned unchanged.
+export function readableErrorBody(body: string, status: number, contentType: string | null): string {
+  const isHtml = (contentType || "").toLowerCase().includes("text/html") || /^\s*<(!doctype|html)/i.test(body);
+  if (!isHtml) {
+    return body;
+  }
+  const title = body.match(/<title>([^<]*)<\/title>/i)?.[1]?.trim() || `HTTP ${status}`;
+  if (status === 504 || status === 408) {
+    return i18n.global.t("errors.proxyTimeout", { error: title });
+  }
+  return i18n.global.t("errors.errorPage", { error: title });
 }
 
 export async function fetchJSON<T = unknown>(url: string, opts?: FetchOptions): Promise<T> {

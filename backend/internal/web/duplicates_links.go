@@ -207,3 +207,34 @@ func freeableCopies(distinct, external int) int {
 	}
 	return contained
 }
+
+// markLinksOnly records a file whose paths in one name group are all hard links to it.
+func (s *duplicateProcessingStats) markLinksOnly(id fileID) {
+	if s.linksOnly == nil {
+		s.linksOnly = make(map[fileID]bool)
+	}
+	s.linksOnly[id] = true
+}
+
+// linksOnlyHidden counts the files in linksOnly that are not in any of groups: those were
+// only ever seen as hard links to themselves, so nothing about them is reported.
+func linksOnlyHidden(linksOnly map[fileID]bool, groups []duplicateGroupWithChecksums) int {
+	if len(linksOnly) == 0 {
+		return 0
+	}
+	inGroups := make(map[fileID]bool)
+	for _, group := range groups {
+		for _, info := range group.Links {
+			if info.ok {
+				inGroups[info.id] = true
+			}
+		}
+	}
+	hidden := 0
+	for id := range linksOnly {
+		if !inGroups[id] {
+			hidden++
+		}
+	}
+	return hidden
+}

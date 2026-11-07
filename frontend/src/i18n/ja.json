@@ -40,7 +40,9 @@
     "connection": "サーバーにアクセスできません。",
     "shareNotFound": "無効または期限切れの共有です。",
     "failedToConnectToServer": "サーバーへの接続に失敗しました。",
-    "requestTimedOut": "リクエストがタイムアウトしました。ネットワークまたはリバースプロキシの設定を確認してください。"
+    "requestTimedOut": "リクエストがタイムアウトしました。ネットワークまたはリバースプロキシの設定を確認してください。",
+    "proxyTimeout": "The server took too long to answer ({error}). If this was a long task, such as a search over a large folder, try a smaller one.",
+    "errorPage": "The server answered with an error page ({error})."
   },
   "files": {
     "sortByCreationTime": "作成日時で並べ替え",
@@ -1178,7 +1180,7 @@
     "hardlinkSetTag": "Hardlink (Set {letter}) · {links} links",
     "hardlinkExternalTag": "Hardlink (External) · {links} links",
     "hiddenNoSavings": "Hidden, no space to free{suffix}",
-    "hiddenNoSavingsTitle": "Groups where every file also has hardlinks outside the results: deleting from these results would free no space.",
+    "hiddenNoSavingsTitle": "Groups where deleting from these results would free no space: paths that are all hardlinks to one file, or files that all also have hardlinks outside the results.",
     "otherLinks": "Other links:",
     "otherLinksMore": "+{count} more",
     "otherLinksNotFound": "{count} not found",

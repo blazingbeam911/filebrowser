@@ -40,7 +40,9 @@
     "connection": "無法連線到伺服器。",
     "shareNotFound": "分享連結無效或已過期。",
     "failedToConnectToServer": "無法連線到伺服器，請確認服務是否仍在執行。",
-    "requestTimedOut": "請求已超時。請檢查您的網路或反向代理設定。"
+    "requestTimedOut": "請求已超時。請檢查您的網路或反向代理設定。",
+    "proxyTimeout": "The server took too long to answer ({error}). If this was a long task, such as a search over a large folder, try a smaller one.",
+    "errorPage": "The server answered with an error page ({error})."
   },
   "files": {
     "sortByCreationTime": "按建立時間排序",
@@ -1178,7 +1180,7 @@
     "hardlinkSetTag": "Hardlink (Set {letter}) · {links} links",
     "hardlinkExternalTag": "Hardlink (External) · {links} links",
     "hiddenNoSavings": "Hidden, no space to free{suffix}",
-    "hiddenNoSavingsTitle": "Groups where every file also has hardlinks outside the results: deleting from these results would free no space.",
+    "hiddenNoSavingsTitle": "Groups where deleting from these results would free no space: paths that are all hardlinks to one file, or files that all also have hardlinks outside the results.",
     "otherLinks": "Other links:",
     "otherLinksMore": "+{count} more",
     "otherLinksNotFound": "{count} not found",
