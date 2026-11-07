@@ -138,6 +138,11 @@ export default {
     return {
       searchPath: "/",
       selectedSource: "",
+      // The folder and source the shown results were searched in. Result paths are relative to
+      // that folder, so they are resolved (and previewed and deleted) against these, not the
+      // form fields, which can change before the next search.
+      resultsPath: "/",
+      resultsSource: "",
       minSizeValue: 10,
       loading: false,
       error: null,
@@ -246,18 +251,22 @@ export default {
       this.loading = true;
       this.error = null;
       this.lastRequestTime = now;
+      const path = this.searchPath;
+      const source = this.selectedSource;
 
       try {
         // API now expects minSizeMb directly (in megabytes)
         // Always use false for checksums due to performance issues
         const result = await toolsApi.duplicateFinder(
-          this.searchPath,
-          this.selectedSource,
+          path,
+          source,
           this.minSizeValue,
           false // Checksum disabled
         );
 
         // Handle new response format with incomplete metadata
+        this.resultsPath = path;
+        this.resultsSource = source;
         this.duplicateGroups = result.groups || [];
         this.isIncomplete = result.incomplete || false;
         this.hiddenNoSavings = result.hiddenNoSavings || 0;
@@ -352,7 +361,7 @@ export default {
     getFullPath(filePath) {
       // Ensure the file path includes the full path from root
       // If searching in a subpath, the backend may return relative paths
-      const searchPath = this.searchPath || '/';
+      const searchPath = this.resultsPath || '/';
 
       // Normalize search path (ensure trailing slash is removed)
       const normalizedSearchPath = searchPath === '/' || searchPath === ''
@@ -404,7 +413,7 @@ export default {
     },
     getFileKey(file) {
       // Create a unique key for the file based on source and path
-      return `${this.selectedSource}::${this.getFullPath(file.path)}`;
+      return `${this.resultsSource}::${this.getFullPath(file.path)}`;
     },
     handleItemSelect({ index }) {
       // Toggle selection - if already selected, remove it; if not selected, add it
@@ -456,10 +465,10 @@ export default {
               const file = group.files.at(fileIndex);
               const fullPath = this.getFullPath(file.path);
               const previewUrl = this.shouldHavePreview(file)
-                ? resourcesApi.getPreviewURL(this.selectedSource, fullPath, file.modified)
+                ? resourcesApi.getPreviewURL(this.resultsSource, fullPath, file.modified)
                 : null;
               items.push({
-                source: this.selectedSource,
+                source: this.resultsSource,
                 path: fullPath,
                 type: file.type,
                 size: file.size,
@@ -499,7 +508,7 @@ export default {
             if (uniqueIndex === selectedIndex) {
               const file = group.files.at(fileIndex);
               itemsToDelete.push({
-                source: this.selectedSource,
+                source: this.resultsSource,
                 path: this.getFullPath(file.path),
               });
               break;
