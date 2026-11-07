@@ -12,10 +12,17 @@
  *
  * While hidden, the root element has the CURSOR_HIDDEN_CLASS class: styles.css hides the
  * cursor and hover effects check for it, so the row under a hidden cursor doesn't look
- * selected. The video player hides the cursor on its own, with its controls (styles.css).
+ * selected. Each change is also announced as a CURSOR_HIDDEN_EVENT on the window (detail:
+ * `{ hidden }`), so hover behavior in code, like the pop-up preview, can follow it. The video
+ * player hides the cursor on its own, with its controls (styles.css).
+ *
+ * Known browser limit: after switching back to the browser from another window, the browser
+ * may not redraw the cursor (it hides only once the mouse has moved) because it hasn't seen
+ * the mouse over the page since it regained focus. The class is set all the same.
  */
 
 export const CURSOR_HIDDEN_CLASS = "fb-cursor-hidden";
+export const CURSOR_HIDDEN_EVENT = "fb-cursor-hidden-change";
 export const IDLE_HIDE_MS = 3000;
 
 const LONE_KEYS = new Set([
@@ -39,6 +46,11 @@ const LONE_KEYS = new Set([
 const IDLE_ZONE_SELECTOR = "[data-cursor-idle-hide]";
 const IDLE_EXEMPT_SELECTOR =
   'button, a, input, select, textarea, header, [role="button"], .nav-button';
+
+/** True while the cursor is hidden. */
+export function isCursorHidden(doc = document) {
+  return doc.documentElement.classList.contains(CURSOR_HIDDEN_CLASS);
+}
 
 /** True for keys that don't hide the cursor when pressed on their own. */
 export function isLoneModifierKey(key) {
@@ -69,7 +81,11 @@ export function installCursorHide(win = window, { idleMs = IDLE_HIDE_MS } = {}) 
   let idleTimer = null;
 
   const setHidden = (hidden) => {
+    if (isCursorHidden(doc) === hidden) {
+      return;
+    }
     doc.documentElement.classList.toggle(CURSOR_HIDDEN_CLASS, hidden);
+    win.dispatchEvent(new win.CustomEvent(CURSOR_HIDDEN_EVENT, { detail: { hidden } }));
   };
 
   const onIdle = () => {

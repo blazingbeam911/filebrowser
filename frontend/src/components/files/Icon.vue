@@ -38,6 +38,7 @@ import { getTypeInfo } from "@/utils/mimetype";
 import { getObjectProperty } from '@/utils/object.js';
 import { mutations, state, getters } from "@/store";
 import { setImageLoaded } from "@/utils/imageCache";
+import { CURSOR_HIDDEN_EVENT, isCursorHidden } from "@/utils/cursorHide.js";
 
 const POPUP_PREVIEW_HOVER_DELAY_MS = 200;
 
@@ -106,6 +107,8 @@ export default {
       svgPath: "",
       previewTimeouts: [],
       popupHoverTimeoutId: null,
+      // The mouse is over this icon (between mouseenter and mouseleave).
+      hovered: false,
       previewAbortController: null,
       preloadAbortControllers: [],
       imageBlobUrl: null,
@@ -346,11 +349,33 @@ export default {
       if (!getters.previewPerms().popup || !this.path) {
         return;
       }
+      if (!this.hovered) {
+        this.hovered = true;
+        window.addEventListener(CURSOR_HIDDEN_EVENT, this.handleCursorHiddenChange);
+      }
+      this.schedulePopupPreview();
+    },
+    // No pop-up while the cursor is hidden: a folder opened from the keyboard sends a
+    // mouseenter to whatever item ends up under the still mouse. Moving the mouse again shows
+    // the cursor, and with it the pop-up of the item under it.
+    schedulePopupPreview() {
       this.clearPopupHoverTimeout();
+      if (isCursorHidden()) {
+        return;
+      }
       this.popupHoverTimeoutId = setTimeout(() => {
         this.popupHoverTimeoutId = null;
-        this.showPopupPreview();
+        if (!isCursorHidden()) {
+          this.showPopupPreview();
+        }
       }, POPUP_PREVIEW_HOVER_DELAY_MS);
+    },
+    handleCursorHiddenChange(event) {
+      if (event.detail?.hidden) {
+        this.stopPopupPreview();
+      } else {
+        this.schedulePopupPreview();
+      }
     },
     showPopupPreview() {
       const source = getters.isShare() ? state.shareInfo?.hash : (this.source || state.req.source);
@@ -433,6 +458,16 @@ export default {
       updateThumbnail();
     },
     handleMouseLeave() {
+      this.stopHoverTracking();
+      this.stopPopupPreview();
+    },
+    stopHoverTracking() {
+      if (this.hovered) {
+        this.hovered = false;
+        window.removeEventListener(CURSOR_HIDDEN_EVENT, this.handleCursorHiddenChange);
+      }
+    },
+    stopPopupPreview() {
       this.clearPopupHoverTimeout();
       this.cancelPreloadRequests();
       mutations.setPreviewSource("");
@@ -509,6 +544,7 @@ export default {
     this.updateImageTargetSrc();
   },
   beforeUnmount() {
+    this.stopHoverTracking();
     this.cancelActivePreviews();
   },
 };

@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CURSOR_HIDDEN_CLASS,
+  CURSOR_HIDDEN_EVENT,
   IDLE_HIDE_MS,
   installCursorHide,
+  isCursorHidden,
   isIdleHideTarget,
   isLoneModifierKey,
 } from './cursorHide.js';
@@ -121,6 +123,20 @@ describe('installCursorHide', () => {
     expect(hidden()).toBe(false);
     vi.advanceTimersByTime(200);
     expect(hidden()).toBe(true);
+  });
+
+  it('announces each change once, with isCursorHidden matching', () => {
+    const seen = [];
+    const listener = (e) => seen.push([e.detail.hidden, isCursorHidden()]);
+    window.addEventListener(CURSOR_HIDDEN_EVENT, listener);
+    move(10, 10);
+    key('a');
+    key('b');
+    move(10, 10);
+    move(12, 10);
+    move(14, 10);
+    window.removeEventListener(CURSOR_HIDDEN_EVENT, listener);
+    expect(seen).toEqual([[true, true], [false, false]]);
   });
 
   it('installs once and uninstalls cleanly', () => {
