@@ -73,13 +73,7 @@ func previewHandler(w http.ResponseWriter, r *http.Request, d *Context) (int, er
 	if !filePerms.View {
 		return http.StatusForbidden, fmt.Errorf("user is not allowed to view files in this source")
 	}
-	fileInfo, err := files.FileInfoFaster(utils.FileOptions{
-		Path:           path,
-		Source:         source,
-		AlbumArt:       true, // Extract album art for audio previews
-		Expand:         true,
-		FollowSymlinks: true,
-	}, d.User)
+	fileInfo, err := files.FileInfoFaster(previewFileOptions(path, source), d.User) // fufu: shared with thumbjob.go
 	if err != nil {
 		logger.Errorf("error getting file info: %v", err)
 		return ErrToStatus(err), err

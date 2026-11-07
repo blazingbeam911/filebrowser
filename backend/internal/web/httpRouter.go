@@ -156,6 +156,7 @@ func configureHTTPRouter(router, api, publicRoutes, publicApi *http.ServeMux) {
 	api.HandleFunc("GET /tools/activity", withUser(withToolAccess(users.ToolActivityViewer)(ListHandler)))
 	api.HandleFunc("GET /tools/activity/grouped", withUser(withToolAccess(users.ToolActivityViewer)(GroupedHandler)))
 	api.HandleFunc("GET /tools/activity/export", withUser(withToolAccess(users.ToolActivityViewer)(ExportHandler)))
+	registerThumbJobRoutes(api) // fufu: thumbjob.go
 
 	// ========================================
 	// Media Routes - /api/media/ (with public routes)
