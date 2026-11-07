@@ -31,7 +31,7 @@
         {{ error }}
       </div>
 
-      <div v-if="duplicateGroups.length > 0">
+      <div v-if="duplicateGroups.length > 0 || hiddenNoSavings > 0">
         <div class="card-title">
           <h2>{{ $t('general.results') }}</h2>
         </div>
@@ -39,6 +39,7 @@
           <div class="stats">
             <span>{{ $t('duplicateFinder.groupsFound', { suffix: ': ' }) }}<strong>{{ duplicateGroups.length }}</strong></span>
             <span>{{ $t('duplicateFinder.totalWastedSpace', { suffix: ': ' }) }}<strong>{{ humanSize(totalWastedSpace) }}</strong></span>
+            <span v-if="hiddenNoSavings > 0" :title="$t('duplicateFinder.hiddenNoSavingsTitle')">{{ $t('duplicateFinder.hiddenNoSavings', { suffix: ': ' }) }}<strong>{{ hiddenNoSavings }}</strong></span>
           </div>
 
           <!-- Show timeout/limit warning first if applicable -->
@@ -67,7 +68,7 @@
                     <div class="group-header">
                       <span class="group-title">{{ $t('general.group') }} {{ index + 1 }}</span>
                       <span class="group-size">{{ getGroupSizeText(group) }}</span>
-                      <span class="wasted-space">{{ $t('duplicateFinder.wasted', { suffix: ': ' }) }} {{ humanSize(group.size * (group.count - 1)) }}</span>
+                      <span class="wasted-space">{{ $t('duplicateFinder.wasted', { suffix: ': ' }) }} {{ humanSize(getGroupWasted(group)) }}</span>
                     </div>
                     <div class="group-files">
                       <div
@@ -97,6 +98,11 @@
                           @clearSelection="clearSelection"
                           @selectRange="handleSelectRange"
                         />
+                        <span
+                          v-if="file.links > 1"
+                          class="link-tag"
+                          :title="getLinkTagTitle(file)"
+                        >{{ getLinkTagText(file, group) }}</span>
                       </div>
                     </div>
                   </div>
@@ -138,6 +144,7 @@ export default {
       duplicateGroups: [],
       isIncomplete: false,
       incompleteReason: "",
+      hiddenNoSavings: 0,
       lastRequestTime: 0,
       maxGroups: 500,
       selectedIndices: new Set(),
@@ -152,11 +159,7 @@ export default {
       return this.selectedIndices.size;
     },
     totalWastedSpace() {
-      return this.duplicateGroups.reduce((sum, group) => {
-        // Wasted space = size × (count - 1)
-        // We keep one copy, so the rest is wasted
-        return sum + (group.size * (group.count - 1));
-      }, 0);
+      return this.duplicateGroups.reduce((sum, group) => sum + this.getGroupWasted(group), 0);
     },
     totalItems() {
       return this.duplicateGroups.reduce((sum, group) => {
@@ -257,6 +260,7 @@ export default {
         // Handle new response format with incomplete metadata
         this.duplicateGroups = result.groups || [];
         this.isIncomplete = result.incomplete || false;
+        this.hiddenNoSavings = result.hiddenNoSavings || 0;
         this.incompleteReason = result.reason || "";
 
         // Reset selection, deleted, and failed files when new results arrive
@@ -268,6 +272,7 @@ export default {
         this.duplicateGroups = [];
         this.isIncomplete = false;
         this.incompleteReason = "";
+        this.hiddenNoSavings = 0;
         this.selectedIndices.clear();
         this.deletedFiles.clear();
         this.failedFiles.clear();
@@ -298,6 +303,40 @@ export default {
     },
     humanSize(size) {
       return getHumanReadableFilesize(size);
+    },
+    getGroupWasted(group) {
+      // The space deleting listed paths can free: one copy is kept, and a file that also has
+      // hard links outside the results keeps its space (freeableCopies, from the server).
+      const copies = group.freeableCopies ?? group.count - 1;
+      return group.size * copies;
+    },
+    getLinkTagText(file, group) {
+      // Paths in a group that are hard links to one file form a set, lettered A, B, ... when
+      // the group holds more than one set. A path whose other links are all outside the
+      // group is "External".
+      if (file.linkGroup > 0) {
+        if (!group.files.some((f) => f.linkGroup > 1)) {
+          return this.$t('duplicateFinder.hardlinkTag', { links: file.links });
+        }
+        const letter = file.linkGroup <= 26 ? String.fromCharCode(64 + file.linkGroup) : String(file.linkGroup);
+        return this.$t('duplicateFinder.hardlinkSetTag', { letter, links: file.links });
+      }
+      return this.$t('duplicateFinder.hardlinkExternalTag', { links: file.links });
+    },
+    getLinkTagTitle(file) {
+      // The tag's tooltip, with the file's other hard links outside the group one per line.
+      const lines = [this.$t('duplicateFinder.hardlinkTitle')];
+      if (file.otherLinks?.length || file.otherLinksNotFound) {
+        lines.push('', this.$t('duplicateFinder.otherLinks'), ...(file.otherLinks || []));
+        if (file.otherLinksMore) {
+          lines.push(this.$t('duplicateFinder.otherLinksMore', { count: file.otherLinksMore }));
+        }
+        if (file.otherLinksNotFound) {
+          lines.push(this.$t('duplicateFinder.otherLinksNotFound', { count: file.otherLinksNotFound }));
+          lines.push('', this.$t('duplicateFinder.otherLinksNotFoundTitle'));
+        }
+      }
+      return lines.join('\n');
     },
     getGroupSizeText(group) {
       return `${this.humanSize(group.size)} × ${group.count} = ${this.humanSize(group.size * group.count)}`;
@@ -630,6 +669,17 @@ export default {
   width: 100%;
   margin: 0.25em;
   cursor: pointer;
+}
+
+/* Hard link marker: deleting such a path frees no space while another link remains */
+.link-tag {
+  flex: none;
+  padding: 0.2em 0.6em;
+  border-radius: 0.5em;
+  background: var(--surfaceSecondary);
+  color: var(--textSecondary);
+  font-size: 0.8em;
+  white-space: nowrap;
 }
 
 /* Highlight selected items */

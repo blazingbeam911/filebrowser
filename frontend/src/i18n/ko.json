@@ -1173,7 +1173,17 @@
     "groupsFound": "중복 그룹 발견{suffix}",
     "totalWastedSpace": "낭비되는 총 공간{suffix}",
     "wasted": "낭비{suffix}",
-    "emptyState": "검색 기준을 입력하고 중복 파일 찾기를 클릭하여 중복 파일을 식별합니다."
+    "emptyState": "검색 기준을 입력하고 중복 파일 찾기를 클릭하여 중복 파일을 식별합니다.",
+    "hardlinkTag": "Hardlink · {links} links",
+    "hardlinkSetTag": "Hardlink (Set {letter}) · {links} links",
+    "hardlinkExternalTag": "Hardlink (External) · {links} links",
+    "hiddenNoSavings": "Hidden, no space to free{suffix}",
+    "hiddenNoSavingsTitle": "Groups where every file also has hardlinks outside the results: deleting from these results would free no space.",
+    "otherLinks": "Other links:",
+    "otherLinksMore": "+{count} more",
+    "otherLinksNotFound": "{count} not found",
+    "otherLinksNotFoundTitle": "Links not found are outside this source, in folders that aren't indexed, or outside your access.",
+    "hardlinkTitle": "This path is a hardlink. Deleting it frees no space while another link to the file remains."
   },
   "notifications": {
     "title": "알림",

@@ -1173,7 +1173,17 @@
     "groupsFound": "Doppelte Gruppen gefunden{suffix}",
     "totalWastedSpace": "Insgesamt verschwendeter Platz{suffix}",
     "wasted": "Vergeudet{suffix}",
-    "emptyState": "Geben Sie Suchkriterien ein und klicken Sie auf Duplikate suchen, um doppelte Dateien zu identifizieren"
+    "emptyState": "Geben Sie Suchkriterien ein und klicken Sie auf Duplikate suchen, um doppelte Dateien zu identifizieren",
+    "hardlinkTag": "Hardlink · {links} links",
+    "hardlinkSetTag": "Hardlink (Set {letter}) · {links} links",
+    "hardlinkExternalTag": "Hardlink (External) · {links} links",
+    "hiddenNoSavings": "Hidden, no space to free{suffix}",
+    "hiddenNoSavingsTitle": "Groups where every file also has hardlinks outside the results: deleting from these results would free no space.",
+    "otherLinks": "Other links:",
+    "otherLinksMore": "+{count} more",
+    "otherLinksNotFound": "{count} not found",
+    "otherLinksNotFoundTitle": "Links not found are outside this source, in folders that aren't indexed, or outside your access.",
+    "hardlinkTitle": "This path is a hardlink. Deleting it frees no space while another link to the file remains."
   },
   "notifications": {
     "title": "Benachrichtigungen",

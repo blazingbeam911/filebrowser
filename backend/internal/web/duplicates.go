@@ -43,9 +43,12 @@ var duplicateResultsCache = cache.NewCache[duplicateResponse](15 * time.Second)
 var checksumCache = cache.NewCache[string](1 * time.Hour)
 
 type duplicateGroup struct {
-	Size  int64                    `json:"size"`
-	Count int                      `json:"count"`
-	Files []*indexing.SearchResult `json:"files"`
+	Size  int64 `json:"size"`
+	Count int   `json:"count"`
+	// FreeableCopies is how many copies deleting the listed paths can free: at most
+	// Count - 1, fewer when some files also have hard links outside the results.
+	FreeableCopies int                      `json:"freeableCopies"`
+	Files          []*indexing.SearchResult `json:"files"`
 }
 
 // duplicateGroupWithChecksums tracks checksums for each file in a group
@@ -53,7 +56,8 @@ type duplicateGroup struct {
 type duplicateGroupWithChecksums struct {
 	Size     int64
 	Files    []*indexing.SearchResult
-	Checksum string // Single checksum shared by all files in this group
+	Links    []linkInfo // Identity of each path in Files, same order
+	Checksum string     // Single checksum shared by all files in this group
 }
 
 // checksumGroup pairs a file group with its checksum
@@ -63,18 +67,23 @@ type checksumGroup struct {
 }
 
 type duplicateResponse struct {
-	Groups     []duplicateGroup `json:"groups"`
-	Incomplete bool             `json:"incomplete,omitempty"`
-	Reason     string           `json:"reason,omitempty"`
+	Groups []duplicateGroup `json:"groups"`
+	// Groups left out because every file in them also has hard links outside the results.
+	HiddenNoSavings int    `json:"hiddenNoSavings,omitempty"`
+	Incomplete      bool   `json:"incomplete,omitempty"`
+	Reason          string `json:"reason,omitempty"`
 }
 
 type duplicatesOptions struct {
 	source       string
 	searchScope  string
 	combinedPath string
-	minSize      int64
-	useChecksum  bool
-	username     string
+	// userScopePath is the index path of the user's scope; other hard links are looked for
+	// anywhere in it, not only in the searched folder.
+	userScopePath string
+	minSize       int64
+	useChecksum   bool
+	username      string
 }
 
 // duplicateProcessingStats tracks resource usage during duplicate search
@@ -86,6 +95,7 @@ type duplicateProcessingStats struct {
 	stopped             bool
 	stopReason          string
 	uniqueChecksums     map[string]bool // Track unique checksums to monitor cache growth
+	hiddenNoSavings     int             // groups left out: deleting their listed paths frees nothing
 }
 
 // shouldStop checks if processing should stop due to resource limits
@@ -117,6 +127,9 @@ func (s *duplicateProcessingStats) shouldStop() (bool, string) {
 //   - Normalizes filenames (lowercase, removes extension, strips special chars)
 //   - Groups files with similar base names (e.g., "photo.jpg" matches "photo_1.jpg")
 //   - Large groups (>10 files) are skipped to avoid false positives
+//   - Hard links to one file count as one file (same device and inode, read with stat):
+//     only one of their paths is checksummed, a group whose paths are all links to one
+//     file isn't reported, and a group's count is its number of distinct files
 //
 // 5. Progressive Checksum Verification (2-pass):
 //   - Pass 1: Header checksum (first 8KB) - fastest elimination
@@ -249,9 +262,10 @@ func duplicatesHandler(w http.ResponseWriter, r *http.Request, d *Context) (int,
 
 	// Build response with metadata about completeness
 	response := duplicateResponse{
-		Groups:     duplicateGroups,
-		Incomplete: stats.stopped,
-		Reason:     stats.stopReason,
+		Groups:          duplicateGroups,
+		HiddenNoSavings: stats.hiddenNoSavings,
+		Incomplete:      stats.stopped,
+		Reason:          stats.stopReason,
 	}
 
 	// Cache the results before returning (even partial results)
@@ -287,6 +301,9 @@ func findDuplicatesInIndex(index *indexing.Index, opts *duplicatesOptions, stats
 	groupsWithChecksums := []duplicateGroupWithChecksums{}
 	totalBulkQueryTime := time.Duration(0)
 	bulkQueryCount := 0
+	// Each candidate's identity (device and inode), read once per search: hard links to one
+	// file are one file, not duplicates.
+	links := linkMemo{}
 
 	// Process sizes in batches
 	for batchStart := 0; batchStart < len(sizes); batchStart += bulkSizeQueryLimit {
@@ -379,11 +396,18 @@ func findDuplicatesInIndex(index *indexing.Index, opts *duplicatesOptions, stats
 						continue
 					}
 
+					// One representative per distinct file: hard links to one file aren't
+					// duplicates of each other, and only one of their paths needs reading.
+					reps, members := collapseHardlinks(fileGroup, index.Path, links)
+					if len(reps) < 2 {
+						continue
+					}
+
 					// Skip checksumming if fuzzy group is too large - groups with many files
 					// are unlikely to be true duplicates (fuzzy matching is too permissive)
 					// This optimization prevents expensive checksum operations on false positives
-					if len(fileGroup) > maxFuzzyGroupSize {
-						logger.Debugf("[Duplicates] Skipping checksum for fuzzy group with %d files (exceeds limit of %d)", len(fileGroup), maxFuzzyGroupSize)
+					if len(reps) > maxFuzzyGroupSize {
+						logger.Debugf("[Duplicates] Skipping checksum for fuzzy group with %d files (exceeds limit of %d)", len(reps), maxFuzzyGroupSize)
 						continue
 					}
 
@@ -403,7 +427,7 @@ func findDuplicatesInIndex(index *indexing.Index, opts *duplicatesOptions, stats
 					// Verify with checksums using 3-pass progressive verification
 					// At this point, files match on: size + MIME type + fuzzy filename similarity (50%+)
 					// Large fuzzy groups (>10 files) are skipped above to avoid expensive false positives
-					verifiedGroups := groupFilesByChecksum(fileGroup, index, size, stats)
+					verifiedGroups := groupFilesByChecksum(reps, index, size, stats)
 
 					// Create SearchResult objects and track checksums for merging
 					for _, checksumGroup := range verifiedGroups {
@@ -412,22 +436,26 @@ func findDuplicatesInIndex(index *indexing.Index, opts *duplicatesOptions, stats
 						}
 
 						resultGroup := make([]*indexing.SearchResult, 0, len(checksumGroup.Files))
+						resultLinks := make([]linkInfo, 0, len(checksumGroup.Files))
 
-						for _, fileInfo := range checksumGroup.Files {
-							// Remove the user scope from path
-							adjustedPath := "/" + strings.TrimPrefix(fileInfo.Path, opts.combinedPath)
-							result := &indexing.SearchResult{
-								Path:       adjustedPath,
-								Source:     opts.source,
-								Type:       fileInfo.Type,
-								Size:       fileInfo.Size,
-								Modified:   fileInfo.ModTime.Format(time.RFC3339),
-								HasPreview: fileInfo.HasPreview,
+						for _, rep := range checksumGroup.Files {
+							for _, fileInfo := range members[rep] {
+								resultLinks = append(resultLinks, links[filepath.Join(index.Path, fileInfo.Path)])
+								// Remove the user scope from path
+								adjustedPath := "/" + strings.TrimPrefix(fileInfo.Path, opts.combinedPath)
+								result := &indexing.SearchResult{
+									Path:       adjustedPath,
+									Source:     opts.source,
+									Type:       fileInfo.Type,
+									Size:       fileInfo.Size,
+									Modified:   fileInfo.ModTime.Format(time.RFC3339),
+									HasPreview: fileInfo.HasPreview,
+								}
+								if fileInfo.Created != nil {
+									result.Created = fileInfo.Created.Format(time.RFC3339)
+								}
+								resultGroup = append(resultGroup, result)
 							}
-							if fileInfo.Created != nil {
-								result.Created = fileInfo.Created.Format(time.RFC3339)
-							}
-							resultGroup = append(resultGroup, result)
 						}
 
 						if len(resultGroup) >= 2 {
@@ -436,6 +464,7 @@ func findDuplicatesInIndex(index *indexing.Index, opts *duplicatesOptions, stats
 							groupsWithChecksums = append(groupsWithChecksums, duplicateGroupWithChecksums{
 								Size:     size,
 								Files:    resultGroup,
+								Links:    resultLinks,
 								Checksum: checksumGroup.Checksum,
 							})
 						}
@@ -474,17 +503,74 @@ func findDuplicatesInIndex(index *indexing.Index, opts *duplicatesOptions, stats
 	mergedGroups := mergeGroupsByChecksum(groupsWithChecksums)
 
 	// Convert to final format
+	// Count distinct files, not paths: a group whose paths are all hard links to one file
+	// isn't a duplicate group.
 	duplicateGroups := make([]duplicateGroup, 0, len(mergedGroups))
+	var gaps []linkGap
 	for _, group := range mergedGroups {
+		groupGaps := linkGaps(group.Files, group.Links)
+		files, distinct := finalizeGroup(group.Files, group.Links)
+		if distinct < 2 {
+			continue
+		}
+		// When every file in the group also has hard links outside the results, deleting any
+		// of the listed paths frees no space: the group is left out (and counted).
+		freeable := freeableCopies(distinct, len(groupGaps))
+		if freeable == 0 {
+			stats.hiddenNoSavings++
+			continue
+		}
+		gaps = append(gaps, groupGaps...)
 		duplicateGroups = append(duplicateGroups, duplicateGroup{
-			Size:  group.Size,
-			Count: len(group.Files),
-			Files: group.Files,
+			Size:           group.Size,
+			Count:          distinct,
+			FreeableCopies: freeable,
+			Files:          files,
 		})
 	}
+	findOtherLinks(index, opts, duplicateGroups, gaps, links)
 
 	// Groups are already sorted by size (largest to smallest) from SQL query
 	return duplicateGroups
+}
+
+// findOtherLinks lists, for files with hard links outside their group, where those links are:
+// it looks through the indexed files of the same size anywhere in the user's scope.
+func findOtherLinks(index *indexing.Index, opts *duplicatesOptions, groups []duplicateGroup, gaps []linkGap, memo linkMemo) {
+	if len(gaps) == 0 {
+		return
+	}
+	inResults := make(map[string]bool)
+	for _, group := range groups {
+		for _, file := range group.Files {
+			inResults[opts.combinedPath+strings.TrimPrefix(file.Path, "/")] = true
+		}
+	}
+	var sizes []int64
+	seenSize := make(map[int64]bool, len(gaps))
+	for _, gap := range gaps {
+		if !seenSize[gap.size] {
+			seenSize[gap.size] = true
+			sizes = append(sizes, gap.size)
+		}
+	}
+	candidates := make(map[int64][]*iteminfo.FileInfo, len(sizes))
+	indexDB := indexing.GetIndexDB()
+	for start := 0; start < len(sizes); start += bulkSizeQueryLimit {
+		end := start + bulkSizeQueryLimit
+		if end > len(sizes) {
+			end = len(sizes)
+		}
+		bySize, err := indexDB.GetFilesForMultipleSizes(opts.source, sizes[start:end], opts.userScopePath)
+		if err != nil {
+			logger.Errorf("[Duplicates] Failed to query files for other hard links: %v", err)
+			continue
+		}
+		for size, files := range bySize {
+			candidates[size] = filterFilesByPermission(files, index, opts.username)
+		}
+	}
+	attachOtherLinks(gaps, candidates, inResults, index.Path, opts.userScopePath, memo)
 }
 
 // mergeGroupsByChecksum merges groups that share any checksum values
@@ -552,12 +638,14 @@ func mergeGroupsByChecksum(groups []duplicateGroupWithChecksums) []duplicateGrou
 
 		// Merge multiple groups
 		combinedFiles := make([]*indexing.SearchResult, 0)
+		combinedLinks := make([]linkInfo, 0)
 		var combinedSize int64
 		var combinedChecksum string
 
 		for _, idx := range indices {
 			group := groups[idx]
 			combinedFiles = append(combinedFiles, group.Files...)
+			combinedLinks = append(combinedLinks, group.Links...)
 			if combinedChecksum == "" {
 				combinedChecksum = group.Checksum
 			}
@@ -571,6 +659,7 @@ func mergeGroupsByChecksum(groups []duplicateGroupWithChecksums) []duplicateGrou
 			merged = append(merged, duplicateGroupWithChecksums{
 				Size:     combinedSize,
 				Files:    combinedFiles,
+				Links:    combinedLinks,
 				Checksum: combinedChecksum,
 			})
 		}
@@ -613,14 +702,16 @@ func prepDuplicatesOptions(r *http.Request, d *Context) (*duplicatesOptions, err
 	}
 
 	combinedPath := index.MakeIndexPath(filepath.Join(userscope, searchScope), true) // searchScope is a directory
+	userScopePath := index.MakeIndexPath(userscope, true)
 
 	return &duplicatesOptions{
-		source:       source,
-		searchScope:  searchScope,
-		combinedPath: combinedPath.String(),
-		minSize:      minSize,
-		useChecksum:  useChecksum,
-		username:     d.User.Username,
+		source:        source,
+		searchScope:   searchScope,
+		combinedPath:  combinedPath.String(),
+		userScopePath: userScopePath.String(),
+		minSize:       minSize,
+		useChecksum:   useChecksum,
+		username:      d.User.Username,
 	}, nil
 }
 

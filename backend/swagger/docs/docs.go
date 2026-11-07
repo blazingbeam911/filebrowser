@@ -5393,8 +5393,28 @@ const docTemplate = `{
                 "hasPreview": {
                     "type": "boolean"
                 },
+                "linkGroup": {
+                    "type": "integer"
+                },
+                "links": {
+                    "description": "Set by the duplicate finder only: the file's hard link count when it has more than\none, and a number shared by the paths in one duplicate group that are the same file.",
+                    "type": "integer"
+                },
                 "modified": {
                     "type": "string"
+                },
+                "otherLinks": {
+                    "description": "Also set by the duplicate finder only, on a file's first path in a group when the file\nhas hard links outside the group: up to 5 of those paths, how many more were found,\nand how many weren't found. These paths are relative to the user's root, since they can\nlie outside the searched folder; the group's own file paths are relative to the\nsearched folder.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "otherLinksMore": {
+                    "type": "integer"
+                },
+                "otherLinksNotFound": {
+                    "type": "integer"
                 },
                 "path": {
                     "type": "string"
@@ -8767,6 +8787,10 @@ const docTemplate = `{
                         "$ref": "#/definitions/indexing.SearchResult"
                     }
                 },
+                "freeableCopies": {
+                    "description": "FreeableCopies is how many copies deleting the listed paths can free: at most\nCount - 1, fewer when some files also have hard links outside the results.",
+                    "type": "integer"
+                },
                 "size": {
                     "type": "integer"
                 }
@@ -8780,6 +8804,10 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/web.duplicateGroup"
                     }
+                },
+                "hiddenNoSavings": {
+                    "description": "Groups left out because every file in them also has hard links outside the results.",
+                    "type": "integer"
                 },
                 "incomplete": {
                     "type": "boolean"

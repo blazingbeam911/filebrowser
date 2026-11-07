@@ -1222,7 +1222,17 @@
     "groupsFound": "Aurkitutako bikoiztu-taldeak{suffix}",
     "totalWastedSpace": "Alferrik galdutako lekua guztira{suffix}",
     "wasted": "Alferrik galdua{suffix}",
-    "emptyState": "Idatzi bilaketa-irizpideak eta egin klik Bilatu bikoiztuak botoian fitxategi bikoiztuak identifikatzeko"
+    "emptyState": "Idatzi bilaketa-irizpideak eta egin klik Bilatu bikoiztuak botoian fitxategi bikoiztuak identifikatzeko",
+    "hardlinkTag": "Hardlink · {links} links",
+    "hardlinkSetTag": "Hardlink (Set {letter}) · {links} links",
+    "hardlinkExternalTag": "Hardlink (External) · {links} links",
+    "hiddenNoSavings": "Hidden, no space to free{suffix}",
+    "hiddenNoSavingsTitle": "Groups where every file also has hardlinks outside the results: deleting from these results would free no space.",
+    "otherLinks": "Other links:",
+    "otherLinksMore": "+{count} more",
+    "otherLinksNotFound": "{count} not found",
+    "otherLinksNotFoundTitle": "Links not found are outside this source, in folders that aren't indexed, or outside your access.",
+    "hardlinkTitle": "This path is a hardlink. Deleting it frees no space while another link to the file remains."
   },
   "events": {
     "serverShutdown": "Zerbitzaria itzali da.",

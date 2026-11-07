@@ -27,6 +27,18 @@ type SearchResult struct {
 	Created    string `json:"created,omitempty"`
 	HasPreview bool   `json:"hasPreview"`
 	Source     string `json:"source"`
+	// Set by the duplicate finder only: the file's hard link count when it has more than
+	// one, and a number shared by the paths in one duplicate group that are the same file.
+	Links     uint64 `json:"links,omitempty"`
+	LinkGroup int    `json:"linkGroup,omitempty"`
+	// Also set by the duplicate finder only, on a file's first path in a group when the file
+	// has hard links outside the group: up to 5 of those paths, how many more were found,
+	// and how many weren't found. These paths are relative to the user's root, since they can
+	// lie outside the searched folder; the group's own file paths are relative to the
+	// searched folder.
+	OtherLinks         []string `json:"otherLinks,omitempty"`
+	OtherLinksMore     int      `json:"otherLinksMore,omitempty"`
+	OtherLinksNotFound int      `json:"otherLinksNotFound,omitempty"`
 }
 
 // Search parses query and delegates to SearchParsed (legacy / tests).

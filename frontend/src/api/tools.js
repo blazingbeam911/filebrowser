@@ -114,7 +114,8 @@ export async function duplicateFinder(base, source, minSizeMb, useChecksum = fal
     return {
       groups: data.groups,
       incomplete: data.incomplete || false,
-      reason: data.reason || ""
+      reason: data.reason || "",
+      hiddenNoSavings: data.hiddenNoSavings || 0
     };
   } catch (err) {
     notify.showError(err.message || "Error occurred while finding duplicates");

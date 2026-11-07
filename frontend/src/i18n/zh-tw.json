@@ -1173,7 +1173,17 @@
     "groupsFound": "重複群組數{suffix}",
     "totalWastedSpace": "可回收空間總量{suffix}",
     "wasted": "浪費空間{suffix}",
-    "emptyState": "輸入搜尋條件後，按一下 [尋找重複檔案] 即可找出重複檔案。"
+    "emptyState": "輸入搜尋條件後，按一下 [尋找重複檔案] 即可找出重複檔案。",
+    "hardlinkTag": "Hardlink · {links} links",
+    "hardlinkSetTag": "Hardlink (Set {letter}) · {links} links",
+    "hardlinkExternalTag": "Hardlink (External) · {links} links",
+    "hiddenNoSavings": "Hidden, no space to free{suffix}",
+    "hiddenNoSavingsTitle": "Groups where every file also has hardlinks outside the results: deleting from these results would free no space.",
+    "otherLinks": "Other links:",
+    "otherLinksMore": "+{count} more",
+    "otherLinksNotFound": "{count} not found",
+    "otherLinksNotFoundTitle": "Links not found are outside this source, in folders that aren't indexed, or outside your access.",
+    "hardlinkTitle": "This path is a hardlink. Deleting it frees no space while another link to the file remains."
   },
   "notifications": {
     "title": "通知",

@@ -16,8 +16,29 @@ definitions:
         type: string
       hasPreview:
         type: boolean
+      linkGroup:
+        type: integer
+      links:
+        description: |-
+          Set by the duplicate finder only: the file's hard link count when it has more than
+          one, and a number shared by the paths in one duplicate group that are the same file.
+        type: integer
       modified:
         type: string
+      otherLinks:
+        description: |-
+          Also set by the duplicate finder only, on a file's first path in a group when the file
+          has hard links outside the group: up to 5 of those paths, how many more were found,
+          and how many weren't found. These paths are relative to the user's root, since they can
+          lie outside the searched folder; the group's own file paths are relative to the
+          searched folder.
+        items:
+          type: string
+        type: array
+      otherLinksMore:
+        type: integer
+      otherLinksNotFound:
+        type: integer
       path:
         type: string
       size:
@@ -2475,6 +2496,11 @@ definitions:
         items:
           $ref: '#/definitions/indexing.SearchResult'
         type: array
+      freeableCopies:
+        description: |-
+          FreeableCopies is how many copies deleting the listed paths can free: at most
+          Count - 1, fewer when some files also have hard links outside the results.
+        type: integer
       size:
         type: integer
     type: object
@@ -2484,6 +2510,10 @@ definitions:
         items:
           $ref: '#/definitions/web.duplicateGroup'
         type: array
+      hiddenNoSavings:
+        description: Groups left out because every file in them also has hard links
+          outside the results.
+        type: integer
       incomplete:
         type: boolean
       reason:
