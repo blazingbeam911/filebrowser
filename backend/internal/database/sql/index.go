@@ -959,37 +959,58 @@ func (db *IndexDB) GetTypeGroupsForSize(source string, size int64, pathPrefix st
 	return types, rows.Err()
 }
 
+// filesForSizesQuery returns the query for GetFilesForMultipleSizes with n size placeholders,
+// limited to a path range when inPath is set. The unary + on path keeps SQLite from using the
+// (source, path) key for the range: it would then walk every row under the path for each batch
+// of sizes, while the size index finds the few rows of each size directly (with a large folder,
+// tenths of a second per batch against well under a millisecond).
+func filesForSizesQuery(n int, inPath bool) string {
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", n), ",")
+	pathRange := ""
+	if inPath {
+		pathRange = " AND +path >= ? AND +path < ?"
+	}
+	return fmt.Sprintf(`
+		SELECT path, name, size, created_time, mod_time, type, is_dir, is_hidden, has_preview
+		FROM index_items
+		WHERE source = ? AND size IN (%s) AND is_dir = 0%s
+		ORDER BY size, type, name
+		`, placeholders, pathRange)
+}
+
+// sizeGroupsQuery returns the query for GetSizeGroupsForDuplicates, limited to a path range when
+// inPath is set. The unary + on size keeps SQLite from using the size index there: that index
+// reads every file above the minimum size in the whole source, while the (source, path) key
+// reads only the files under the path.
+func sizeGroupsQuery(inPath bool) string {
+	sizeTerm, pathRange := "size >= ?", ""
+	if inPath {
+		sizeTerm, pathRange = "+size >= ?", " AND path >= ? AND path < ?"
+	}
+	return fmt.Sprintf(`
+		SELECT size, COUNT(*) as count
+		FROM index_items
+		WHERE source = ? AND %s AND is_dir = 0%s
+		GROUP BY size
+		HAVING COUNT(*) >= 2
+		ORDER BY size DESC
+		`, sizeTerm, pathRange)
+}
+
 // GetFilesForMultipleSizes retrieves ALL files for a batch of sizes in a single query.
 func (db *IndexDB) GetFilesForMultipleSizes(source string, sizes []int64, pathPrefix string) (map[int64][]*iteminfo.FileInfo, error) {
 	if len(sizes) == 0 {
 		return make(map[int64][]*iteminfo.FileInfo), nil
 	}
 
-	// Build IN clause with placeholders
-	placeholders := make([]string, len(sizes))
 	args := []interface{}{source}
-	for i, size := range sizes {
-		placeholders[i] = "?"
+	for _, size := range sizes {
 		args = append(args, size)
 	}
 
-	var query string
+	query := filesForSizesQuery(len(sizes), pathPrefix != "")
 	if pathPrefix != "" {
-		nextPrefix := getNextPathPrefix(pathPrefix)
-		query = fmt.Sprintf(`
-		SELECT path, name, size, created_time, mod_time, type, is_dir, is_hidden, has_preview
-		FROM index_items 
-		WHERE source = ? AND size IN (%s) AND is_dir = 0 AND path >= ? AND path < ?
-		ORDER BY size, type, name
-		`, strings.Join(placeholders, ","))
-		args = append(args, pathPrefix, nextPrefix)
-	} else {
-		query = fmt.Sprintf(`
-		SELECT path, name, size, created_time, mod_time, type, is_dir, is_hidden, has_preview
-		FROM index_items 
-		WHERE source = ? AND size IN (%s) AND is_dir = 0
-		ORDER BY size, type, name
-		`, strings.Join(placeholders, ","))
+		args = append(args, pathPrefix, getNextPathPrefix(pathPrefix))
 	}
 
 	rows, err := db.Query(query, args...)
@@ -1223,30 +1244,10 @@ func (db *IndexDB) GetFilesBySize(source string, size int64, pathPrefix string) 
 
 // GetSizeGroupsForDuplicates queries for all size groups that have 2+ files for a specific source.
 func (db *IndexDB) GetSizeGroupsForDuplicates(source string, minSize int64, pathPrefix string) ([]int64, map[int64]int, error) {
-	var query string
-	var args []interface{}
-
+	query := sizeGroupsQuery(pathPrefix != "")
+	args := []interface{}{source, minSize}
 	if pathPrefix != "" {
-		nextPrefix := getNextPathPrefix(pathPrefix)
-		query = `
-		SELECT size, COUNT(*) as count
-		FROM index_items
-		WHERE source = ? AND size >= ? AND is_dir = 0 AND path >= ? AND path < ?
-		GROUP BY size
-		HAVING COUNT(*) >= 2
-		ORDER BY size DESC
-		`
-		args = []interface{}{source, minSize, pathPrefix, nextPrefix}
-	} else {
-		query = `
-		SELECT size, COUNT(*) as count
-		FROM index_items
-		WHERE source = ? AND size >= ? AND is_dir = 0
-		GROUP BY size
-		HAVING COUNT(*) >= 2
-		ORDER BY size DESC
-		`
-		args = []interface{}{source, minSize}
+		args = append(args, pathPrefix, getNextPathPrefix(pathPrefix))
 	}
 
 	rows, err := db.Query(query, args...)
