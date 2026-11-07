@@ -316,6 +316,28 @@ func (idx *Index) GetStatus() IndexStatus {
 	return idx.getStatusUnlocked()
 }
 
+// IsBuilding reports whether the index is still being built: no scan pass has finished since
+// startup, and some scanner has no completed scan restored from an earlier run. The stored Status
+// only turns ready when a pass finishes, and a restart over a persisted index waits for the next
+// scheduled scan, so Status alone stays "indexing" over an index that is already complete.
+// A rescan of a complete index does not count as building.
+func (idx *Index) IsBuilding() bool {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	if idx.Status != INDEXING {
+		return false
+	}
+	if len(idx.scanners) == 0 {
+		return true
+	}
+	for _, scanner := range idx.scanners {
+		if scanner.lastScanned.IsZero() {
+			return true
+		}
+	}
+	return false
+}
+
 // getStatusUnlocked calculates Status without acquiring lock (assumes lock is already held)
 func (idx *Index) getStatusUnlocked() IndexStatus {
 	if idx.Status == UNAVAILABLE {

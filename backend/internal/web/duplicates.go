@@ -183,7 +183,9 @@ func duplicatesHandler(w http.ResponseWriter, r *http.Request, d *Context) (int,
 
 	// Safety check: Reject duplicate search during active indexing to prevent resource contention
 	// This protects against CPU/memory spikes and ensures indexing performance is not degraded
-	if string(index.Status) == "indexing" {
+	// Only while the index is first being built: after a restart over a persisted index the
+	// stored status reads "indexing" until the next scheduled scan, though the index is complete.
+	if index.IsBuilding() {
 		return http.StatusServiceUnavailable, fmt.Errorf("duplicate search is not available while indexing is in progress - please try again when indexing completes")
 	}
 

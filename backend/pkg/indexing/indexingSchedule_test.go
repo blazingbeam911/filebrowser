@@ -265,3 +265,44 @@ func TestEmptyIndexStillBootstrapsSerialPass(t *testing.T) {
 		t.Fatal("a scanner with a restored lastScanned must not trigger the serial pass")
 	}
 }
+
+// After a restart over a persisted index no scan runs right away, so the stored Status stays
+// "indexing" until the next scheduled scan; the index is complete and must not count as building.
+func TestIsBuildingAfterRestartWithPersistedScanners(t *testing.T) {
+	idx := newRestoreTestIndex(t, "building_restart", nil, persistedScanners("/"))
+	idx.Status = INDEXING
+	idx.setupMultiScanner(false)
+	if idx.IsBuilding() {
+		t.Fatal("an index restored with completed scans must not count as building")
+	}
+}
+
+func TestIsBuilding(t *testing.T) {
+	idx := &Index{
+		Source:   settings.Source{Name: "building", Path: t.TempDir()},
+		mock:     true,
+		scanners: map[string]*Scanner{},
+	}
+	idx.Status = INDEXING
+	if !idx.IsBuilding() {
+		t.Fatal("an index with no scanners yet is building")
+	}
+	idx.scanners["/"] = &Scanner{scanPath: "/"}
+	idx.scanners["/sub/"] = &Scanner{scanPath: "/sub/", lastScanned: time.Now()}
+	if !idx.IsBuilding() {
+		t.Fatal("an index with a scanner that never finished a scan is building")
+	}
+	idx.scanners["/"].lastScanned = time.Now()
+	if idx.IsBuilding() {
+		t.Fatal("an index whose scanners all finished a scan is not building")
+	}
+	idx.scanners["/new/"] = &Scanner{scanPath: "/new/"}
+	idx.Status = READY
+	if idx.IsBuilding() {
+		t.Fatal("once a pass has finished, a new scanner does not make the index building again")
+	}
+	idx.Status = UNAVAILABLE
+	if idx.IsBuilding() {
+		t.Fatal("an unavailable index is not building")
+	}
+}
