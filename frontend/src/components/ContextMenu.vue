@@ -118,6 +118,12 @@
           @action="showInfoPrompt"
         />
         <action
+          v-if="showGenerateThumbnails"
+          icon="photo_library"
+          :label="$t('thumbnailJobs.generate')"
+          @action="showThumbnailJobPrompt"
+        /><!-- fufu: ThumbnailJob.vue -->
+        <action
           v-if="showDownload"
           icon="file_download"
           :label="$t('general.download')"
@@ -592,6 +598,18 @@ export default {
       }
       return getters.isAdmin() && this.showCreate;
     },
+    /**
+     * fufu: admins. With nothing selected (right-click on empty space opens the create panel)
+     * the current folder; otherwise the selected folders, a job each.
+     */
+    showGenerateThumbnails() {
+      if (this.showLimitedOptions) return false;
+      if (!getters.isAdmin() || getters.isShare() || this.isSearchActive || this.isAdvancedSearch) return false;
+      if (getters.currentView() !== "listingView") return false;
+      if (this.selectedCount === 0) return this.isFolderItem(this.req);
+      if (this.showCreate) return false;
+      return this.providedItems.every((item) => this.isFolderItem(item));
+    },
     showQuotaAction() {
       if (this.showLimitedOptions) return false;
       if (getters.isShare()) return false;
@@ -745,6 +763,18 @@ export default {
           item: target,
           source: sourceName,
           path,
+        },
+      });
+    },
+    showThumbnailJobPrompt() { // fufu
+      mutations.closeHovers();
+      const items = this.selectedCount > 0 ? this.providedItems : [state.req];
+      mutations.showPrompt({
+        name: "ThumbnailJob",
+        props: {
+          title: this.$t("thumbnailJobs.generate"),
+          source: items[0]?.source || state.req.source,
+          paths: items.map((item) => item.path),
         },
       });
     },
@@ -1160,6 +1190,12 @@ export default {
   align-items: center;
   justify-content: flex-start;
   flex-shrink: 0;
+}
+
+/* fufu: room after the label (the icon has 0.5em on each side, the label had none), so the
+   longest label in a menu doesn't run into the edge of the hover highlight */
+#context-menu > .action {
+  padding-right: 0.75em;
 }
 
 .context-menu-header {

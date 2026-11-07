@@ -142,6 +142,8 @@ import Quota from "./Quota.vue";
 import NewFileTemplate from "./NewFileTemplate.vue";
 import DefaultViewPrefs from "./DefaultViewPrefs.vue";
 import SortingManager from "./SortingManager.vue"; // fufu
+import ThumbnailJob from "./ThumbnailJob.vue"; // fufu
+import ThumbnailJobs from "./ThumbnailJobs.vue"; // fufu
 import { state, getters, mutations } from "@/store";
 import { getObjectProperty, omitObjectProperty, setObjectProperty } from "@/utils/object.js";
 
@@ -203,6 +205,8 @@ export default {
     NewFileTemplate,
     DefaultViewPrefs,
     SortingManager,
+    ThumbnailJob,
+    ThumbnailJobs,
   },
   data() {
     return {

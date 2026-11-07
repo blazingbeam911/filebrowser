@@ -11,6 +11,8 @@
         :description="$t('settings.analyticsViewDescription')" @click="openAnalyticsPrompt" />
       <SettingsButton class="item" :name="$t('settings.configViewerOpen')"
         :description="$t('settings.configViewerDescription')" @click="openConfigViewerPrompt" />
+      <SettingsButton class="item" :name="$t('thumbnailJobs.panelTitle')"
+        :description="$t('thumbnailJobs.panelDescription')" @click="openThumbnailJobsPrompt" /><!-- fufu -->
     </div>
   </div>
 </template>
@@ -90,6 +92,9 @@ export default {
           title: this.$t("settings.analyticsView"),
         },
       });
+    },
+    openThumbnailJobsPrompt() { // fufu: components/prompts/ThumbnailJobs.vue
+      mutations.showPrompt({ name: "ThumbnailJobs", props: { title: this.$t("thumbnailJobs.panelTitle") } });
     },
     openConfigViewerPrompt() {
       mutations.showPrompt({

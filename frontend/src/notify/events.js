@@ -3,6 +3,7 @@ import i18n from "@/i18n/index.ts"
 import { notify } from "@/notify/index.ts"
 import { mutations, state } from "@/store/index.ts"
 import { globalVars } from "@/utils/constants.js"
+import { onThumbnailJobEvent, refreshThumbnailJobs } from "@/utils/thumbnailJobs.js" // fufu
 
 let eventSrc = null
 let reconnectTimeout = null
@@ -102,6 +103,7 @@ async function setupSSE () {
     clearReconnect()
     mutations.setRealtimeActive(true)
     void updateSourceInfo()
+    void refreshThumbnailJobs() // fufu: page load, or the server came back (job ids restart)
     // Reset authentication failure flag on successful connection
     authenticationFailed = false
     // Reset shutdown message flag on successful reconnection
@@ -212,6 +214,10 @@ async function eventRouter (eventType, message) {
       } catch (error) {
         console.error('Error dispatching file watch event:', error)
       }
+      break
+
+    case 'thumbnailJob': // fufu: utils/thumbnailJobs.js
+      onThumbnailJobEvent(message)
       break
 
     default:

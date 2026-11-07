@@ -29,6 +29,7 @@
   <Tooltip />
   <NextPrevious />
   <PopupPreview v-if="popupEnabled" />
+  <ThumbnailJobProgress v-if="isLoggedIn" /><!-- fufu -->
 </template>
 
 <script>
@@ -44,6 +45,7 @@ import Tooltip from "@/components/Tooltip.vue";
 import NextPrevious from "@/components/files/nextPrevious.vue";
 import PopupPreview from "@/components/files/PopupPreview.vue";
 import Shelf from "@/components/Shelf.vue";
+import ThumbnailJobProgress from "@/components/ThumbnailJobProgress.vue"; // fufu
 import { settingsApi } from "@/api";
 import { state, getters, mutations } from "@/store";
 import { events, notify } from "@/notify";
@@ -68,6 +70,7 @@ export default {
     PopupPreview,
     Shelf,
     Search,
+    ThumbnailJobProgress,
   },
   data() {
     return {
