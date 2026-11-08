@@ -373,6 +373,8 @@
       "speedReset": "Back to normal speed",
       "frameStep": "Pause and step one frame back or forward (video)",
       "abLoop": "A-B loop: set the start, set the end, then clear",
+      "wheelVolume": "Change the volume with the mouse over the player",
+      "wheelArt": "Resize the album art with the mouse over it",
       "title": "Медиен плейър",
       "playPause": "Възпроизвеждане/Пауза",
       "seekPercentage": "Прескачане от 10% до 90%",

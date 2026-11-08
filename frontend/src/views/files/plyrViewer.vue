@@ -1,5 +1,5 @@
 <template>
-  <div class="plyr-viewer">
+  <div class="plyr-viewer" @wheel.capture="handleWheelVolume">
     <!-- Audio with plyr -->
     <div
       v-if="previewType === 'audio'"
@@ -250,6 +250,7 @@ import {
   parseStoredSpeed,
   steppedSpeed,
   mediaKeyAction,
+  wheelVolumeStep,
   seekIconPath,
 } from '@/plyr/plyrMediaKeys.js';
 import {
@@ -309,6 +310,9 @@ const VIDEO_SPEED_STORAGE_KEY = 'fbVideoSpeed';
 const AUDIO_SPEED_STORAGE_KEY = 'fbAudioSpeed';
 const OSD_DURATION_MS = 1500;
 const FRAME_STEP_TIMEOUT_MS = 1500;
+const WHEEL_VOLUME_STEP = 0.05;
+// Places in the viewer where the wheel scrolls content.
+const WHEEL_SCROLLS_HERE = '.plyr__menu__container, .lyrics-panel, .lyrics-mobile';
 const AB_LOOP_POLL_MS = 30;
 let pendingFullscreenResume = false;
 let pendingPipResume = false;
@@ -441,6 +445,7 @@ export default {
       volumeBarVisible: false,
       volumeBarPercent: 0,
       volumeBarTimer: null,
+      wheelAccumulated: 0,
 
       frameTracker: null,
       frameStepOrigin: null,
@@ -1462,6 +1467,23 @@ export default {
       if (!abLoopActive(this.abLoop) || !this.player?.media) return;
       this.abLoopArmed = this.player.media.currentTime < this.abLoop.b;
     },
+    handleWheelVolume(event) {
+      if (!this.player || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.target.closest?.(WHEEL_SCROLLS_HERE)) return;
+      if (event.shiftKey) {
+        // Shift+wheel resizes the album art, and nothing else in the player.
+        if (!event.target.closest?.('.album-art-container')) event.stopPropagation();
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      const { deltaMode, deltaY } = event;
+      const { direction, accumulated } = wheelVolumeStep(this.wheelAccumulated, deltaY, deltaMode);
+      this.wheelAccumulated = accumulated;
+      if (direction === 0) return;
+      this.player.increaseVolume(direction * WHEEL_VOLUME_STEP);
+      this.showVolumeBar();
+    },
     /** Kept current while hidden, so the first change doesn't animate up from empty. */
     syncVolumeBar() {
       if (!this.player?.media) return;
@@ -1620,9 +1642,10 @@ export default {
       this.isHovering = false;
     },
     onAlbumArtScroll(event) {
-      if (!this.isHovering) return;
+      if (!this.isHovering || !event.shiftKey) return;
       event.preventDefault();
-      const scrollDelta = event.deltaY > 0 ? -5 : 5; // Scroll down decreases, scroll up increases
+      // With Shift held, browsers may report the wheel as horizontal.
+      const scrollDelta = (event.deltaY || event.deltaX) > 0 ? -5 : 5; // Scroll down decreases, scroll up increases
       const newSize = this.albumArtSize + scrollDelta;
       // Apply size constraints (minimum 10em, maximum 50em)
       this.albumArtSize = Math.max(10, Math.min(50, newSize));

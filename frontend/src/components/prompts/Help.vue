@@ -169,6 +169,14 @@
           <span>{{ $t("help.media.volume") }}</span>
         </div>
         <div class="shortcut-item">
+          <kbd>SCROLL</kbd> <!-- eslint-disable-line @intlify/vue-i18n/no-raw-text -->
+          <span>{{ $t("help.media.wheelVolume") }}</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>SHIFT + SCROLL</kbd> <!-- eslint-disable-line @intlify/vue-i18n/no-raw-text -->
+          <span>{{ $t("help.media.wheelArt") }}</span>
+        </div>
+        <div class="shortcut-item">
           <kbd>Q</kbd> <!-- eslint-disable-line @intlify/vue-i18n/no-raw-text -->
           <span>{{ $t("help.media.playbackQueue") }}</span>
         </div>

@@ -196,6 +196,8 @@
       "speedReset": "Back to normal speed",
       "frameStep": "Pause and step one frame back or forward (video)",
       "abLoop": "A-B loop: set the start, set the end, then clear",
+      "wheelVolume": "Change the volume with the mouse over the player",
+      "wheelArt": "Resize the album art with the mouse over it",
       "title": "媒體播放器",
       "playPause": "播放/暫停",
       "seekPercentage": "從 10% 跳轉到 90%",

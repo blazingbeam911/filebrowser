@@ -45,6 +45,23 @@ export function mediaKeyAction(event) {
   }
 }
 
+const WHEEL_NOTCH_PIXELS = 50;
+const WHEEL_LINE_PIXELS = 33;
+const WHEEL_PAGE_PIXELS = 400;
+
+/**
+ * One volume step for a wheel event, or none yet. A mouse wheel notch is one step; a touchpad sends
+ * many small movements, which are added up so that a swipe doesn't jump to the limit.
+ */
+export function wheelVolumeStep(accumulated, deltaY, deltaMode) {
+  let pixels = deltaY;
+  if (deltaMode === 1) pixels *= WHEEL_LINE_PIXELS;
+  if (deltaMode === 2) pixels *= WHEEL_PAGE_PIXELS;
+  const total = Math.abs(pixels) >= WHEEL_NOTCH_PIXELS ? pixels : accumulated + pixels;
+  if (Math.abs(total) < WHEEL_NOTCH_PIXELS) return { direction: 0, accumulated: total };
+  return { direction: total < 0 ? 1 : -1, accumulated: 0 };
+}
+
 function clampSpeed(speed) {
   return Math.min(MAX_SPEED, Math.max(MIN_SPEED, speed));
 }

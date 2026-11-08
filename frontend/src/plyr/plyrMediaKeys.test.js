@@ -6,6 +6,7 @@ import {
   parseStoredSpeed,
   seekIconPath,
   steppedSpeed,
+  wheelVolumeStep,
 } from '@/plyr/plyrMediaKeys.js';
 
 const key = (k, mods = {}) => ({ key: k, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, ...mods });
@@ -104,5 +105,25 @@ describe('seekIconPath', () => {
   it('points the arrow by direction and numbers it by size', () => {
     expect(seekIconPath(10)).not.toBe(seekIconPath(-10));
     expect(seekIconPath(1)).not.toBe(seekIconPath(60));
+  });
+});
+
+describe('wheelVolumeStep', () => {
+  it('takes one step per mouse wheel notch, in pixels or lines', () => {
+    expect(wheelVolumeStep(0, -100, 0)).toEqual({ direction: 1, accumulated: 0 });
+    expect(wheelVolumeStep(0, 3, 1)).toEqual({ direction: -1, accumulated: 0 });
+  });
+
+  it('adds up small touchpad movements', () => {
+    const first = wheelVolumeStep(0, -20, 0);
+    expect(first).toEqual({ direction: 0, accumulated: -20 });
+    const second = wheelVolumeStep(first.accumulated, -20, 0);
+    expect(second.direction).toBe(0);
+    expect(wheelVolumeStep(second.accumulated, -20, 0)).toEqual({ direction: 1, accumulated: 0 });
+  });
+
+  it('adds up fractions of a line', () => {
+    expect(wheelVolumeStep(0, -0.5, 1).direction).toBe(0);
+    expect(wheelVolumeStep(-40, -0.5, 1).direction).toBe(1);
   });
 });
