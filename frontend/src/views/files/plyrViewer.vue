@@ -252,6 +252,18 @@ import {
   mediaKeyAction,
   seekIconPath,
 } from '@/plyr/plyrMediaKeys.js';
+import {
+  DEFAULT_FRAME_SECONDS,
+  createFrameTracker,
+  frameOffset,
+  frameStepTarget,
+} from '@/plyr/plyrFrameTracker.js';
+import {
+  EMPTY_AB_LOOP,
+  abLoopActive,
+  abLoopMarkers,
+  nextAbLoop,
+} from '@/plyr/plyrAbLoop.js';
 import { getPreviewURL, getPreviewURLPublic } from '@/api/resources';
 import {
   blockPlyrSeekOnInput,
@@ -296,6 +308,8 @@ const PLYR_CAPTION_SIZE_FIELD = 'captionSize';
 const VIDEO_SPEED_STORAGE_KEY = 'fbVideoSpeed';
 const AUDIO_SPEED_STORAGE_KEY = 'fbAudioSpeed';
 const OSD_DURATION_MS = 1500;
+const FRAME_STEP_TIMEOUT_MS = 1500;
+const AB_LOOP_POLL_MS = 30;
 let pendingFullscreenResume = false;
 let pendingPipResume = false;
 let pendingResumeTimestamp = 0;
@@ -427,6 +441,15 @@ export default {
       volumeBarVisible: false,
       volumeBarPercent: 0,
       volumeBarTimer: null,
+
+      frameTracker: null,
+      frameStepOrigin: null,
+      frameStepLastTarget: null,
+      frameStepTimer: null,
+      abLoop: EMPTY_AB_LOOP,
+      // False after a seek past B, so moving there on purpose doesn't jump back.
+      abLoopArmed: true,
+      abLoopPollTimer: null,
 
       // Plyr instance
       player: null,
@@ -1072,6 +1095,7 @@ export default {
         this.videoLoadingCleanup = null;
       }
       this.videoPlaybackLoading = false;
+      this.teardownFrameControls();
       this.teardownQueryPlaybackSeek();
       this.teardownOverlaidHintController();
       this.teardownPipControlGuard();
@@ -1315,6 +1339,7 @@ export default {
       if (this.previewType !== 'video' && this.previewType !== 'audio') return false;
       const action = mediaKeyAction(event);
       if (!action) return false;
+      if (action.type === 'frameStep' && this.previewType !== 'video') return false;
       event.preventDefault();
       event.stopPropagation();
       switch (action.type) {
@@ -1331,6 +1356,12 @@ export default {
         case 'speedReset':
           this.setSpeed(1);
           break;
+        case 'frameStep':
+          this.stepFrame(action.direction);
+          break;
+        case 'abLoop':
+          if (!event.repeat) this.cycleAbLoop();
+          break;
         default:
           break;
       }
@@ -1346,8 +1377,98 @@ export default {
       this.player.speed = speed;
       this.showOsd(this.$t('player.osdSpeed', { speed }));
     },
-    showVolumeBar() {
+    setupFrameTracking() {
+      if (this.previewType !== 'video' || !this.player?.media) return;
+      this.frameTracker = createFrameTracker(this.player.media, this.onVideoFrame);
+    },
+    teardownFrameControls() {
+      this.frameTracker?.stop();
+      this.frameTracker = null;
+      if (this.frameStepTimer) clearTimeout(this.frameStepTimer);
+      this.frameStepTimer = null;
+      this.frameStepOrigin = null;
+      if (this.abLoopPollTimer) clearInterval(this.abLoopPollTimer);
+      this.abLoopPollTimer = null;
+    },
+    onVideoFrame(mediaTime) {
+      if (this.frameStepOrigin !== null && mediaTime !== this.frameStepOrigin) this.finishFrameStep();
+      this.checkAbLoop(mediaTime);
+    },
+    finishFrameStep() {
+      if (this.frameStepTimer) clearTimeout(this.frameStepTimer);
+      this.frameStepTimer = null;
+      this.frameStepOrigin = null;
+    },
+    stepFrame(direction) {
+      // One step at a time: the next starts from the frame this one lands on.
+      if (this.frameStepOrigin !== null || !(this.player.duration > 0)) return;
+      const video = this.player.media;
+      this.player.pause();
+      const origin = this.frameTracker?.mediaTime() ?? video.currentTime;
+      const frameSeconds = this.frameTracker?.frameSeconds() ?? DEFAULT_FRAME_SECONDS;
+      const offset = frameOffset(origin, this.frameStepLastTarget, video.currentTime);
+      const target = frameStepTarget(origin, frameSeconds, direction, video.duration, offset);
+      if (target === null) return;
+      this.frameStepOrigin = origin;
+      this.frameStepLastTarget = target;
+      // A browser without the frame callback, or a seek that lands on the same frame, must not
+      // lock the keys.
+      this.frameStepTimer = setTimeout(this.finishFrameStep, this.frameTracker ? FRAME_STEP_TIMEOUT_MS : 150);
+      video.currentTime = target;
+    },
+    cycleAbLoop() {
+      if (!(this.player.duration > 0)) return;
+      const next = nextAbLoop(this.abLoop, this.player.media.currentTime);
+      if (next === this.abLoop) return;
+      let message = this.$t('player.osdAbEnd');
+      if (next.a === null) message = this.$t('player.osdAbCleared');
+      else if (next.b === null) message = this.$t('player.osdAbStart');
+      this.abLoop = next;
+      this.abLoopArmed = true;
+      this.drawAbLoopMarkers();
+      this.syncAbLoopPolling();
+      this.showOsd(message);
+    },
+    drawAbLoopMarkers() {
+      const progress = this.player?.elements?.container?.querySelector('.plyr__progress');
+      if (!progress) return;
+      progress.querySelectorAll('.ab-loop-marker').forEach((el) => el.remove());
+      for (const percent of abLoopMarkers(this.abLoop, this.player.duration)) {
+        const marker = document.createElement('span');
+        marker.className = 'ab-loop-marker';
+        marker.style.left = `${percent}%`;
+        progress.append(marker);
+      }
+    },
+    /** Video jumps from the frame callback. Without one, as on audio, a short timer watches the time. */
+    syncAbLoopPolling() {
+      const needed = abLoopActive(this.abLoop) && !this.frameTracker;
+      if (needed && !this.abLoopPollTimer) {
+        this.abLoopPollTimer = setInterval(() => {
+          this.checkAbLoop(this.player?.media?.currentTime ?? 0);
+        }, AB_LOOP_POLL_MS);
+      } else if (!needed && this.abLoopPollTimer) {
+        clearInterval(this.abLoopPollTimer);
+        this.abLoopPollTimer = null;
+      }
+    },
+    checkAbLoop(time) {
+      if (!abLoopActive(this.abLoop) || !this.abLoopArmed) return;
+      const media = this.player?.media;
+      if (!media || media.paused || media.seeking) return;
+      if (time >= this.abLoop.b) media.currentTime = this.abLoop.a;
+    },
+    onAbLoopSeeking() {
+      if (!abLoopActive(this.abLoop) || !this.player?.media) return;
+      this.abLoopArmed = this.player.media.currentTime < this.abLoop.b;
+    },
+    /** Kept current while hidden, so the first change doesn't animate up from empty. */
+    syncVolumeBar() {
+      if (!this.player?.media) return;
       this.volumeBarPercent = this.player.muted ? 0 : Math.round(this.player.volume * 100);
+    },
+    showVolumeBar() {
+      this.syncVolumeBar();
       this.volumeBarVisible = true;
       if (this.volumeBarTimer) clearTimeout(this.volumeBarTimer);
       this.volumeBarTimer = setTimeout(() => {
@@ -1604,6 +1725,7 @@ export default {
       this.seekOnReleaseCleanup = enablePlyrSeekOnRelease(this.player);
       this.setupScrubPreview();
       this.setupVideoLoadingIndicator();
+      this.setupFrameTracking();
       this.resumePlaybackAfterNavigation();
       if (this.previewType === 'video') {
         if (!this.inlineResumeSnapshot && !this.pipHandoffSeekSeconds) {
@@ -2140,6 +2262,10 @@ export default {
         this.player.on('enterfullscreen', this.onFullscreenEnter);
         this.player.on('exitfullscreen', this.onFullscreenExit);
         this.player.on('ratechange', this.onRateChange);
+        this.player.on('seeking', this.onAbLoopSeeking);
+        this.player.on('volumechange', this.syncVolumeBar);
+        this.player.on('ready', this.syncVolumeBar);
+        this.syncVolumeBar();
         this.player.on('ready', this.syncSpeedMenuLabel);
       }
       if (this.previewType === 'video') {
@@ -3002,6 +3128,12 @@ export default {
       }
     },
     handleMediaEnd() {
+      // B can be so close to the end that the file ends before a check sees it.
+      if (abLoopActive(this.abLoop) && this.abLoopArmed) {
+        this.player.currentTime = this.abLoop.a;
+        this.player.play();
+        return;
+      }
       mutations.setPlaybackState(false);
       const queue = state.playbackQueue.queue;
       const currentIndex = state.playbackQueue.currentIndex;
@@ -3601,6 +3733,19 @@ export default {
 }
 
 /* Double-tap / double-click seek feedback (left/right third of video) */
+.ab-loop-marker {
+  position: absolute;
+  top: 50%;
+  z-index: 3;
+  width: 3px;
+  height: 14px;
+  border-radius: 1px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 60%);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
 .media-osd {
   position: absolute;
   top: 1em;

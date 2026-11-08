@@ -34,6 +34,12 @@ export function mediaKeyAction(event) {
       return { type: 'speed', delta: LARGE_SPEED_STEP };
     case '\\':
       return { type: 'speedReset' };
+    case ',':
+      return { type: 'frameStep', direction: -1 };
+    case '.':
+      return { type: 'frameStep', direction: 1 };
+    case 'L':
+      return shiftKey ? { type: 'abLoop' } : null;
     default:
       return null;
   }

@@ -42,6 +42,17 @@ describe('mediaKeyAction', () => {
     expect(mediaKeyAction(key('}', { shiftKey: true }))).toEqual({ type: 'speed', delta: 0.5 });
   });
 
+  it('maps frame step and the A-B loop', () => {
+    expect(mediaKeyAction(key(','))).toEqual({ type: 'frameStep', direction: -1 });
+    expect(mediaKeyAction(key('.'))).toEqual({ type: 'frameStep', direction: 1 });
+    expect(mediaKeyAction(key('L', { shiftKey: true }))).toEqual({ type: 'abLoop' });
+  });
+
+  it('leaves plain l, and an L typed with Caps Lock, to the single-file loop', () => {
+    expect(mediaKeyAction(key('l'))).toBeNull();
+    expect(mediaKeyAction(key('L'))).toBeNull();
+  });
+
   it('leaves Ctrl, Alt and Meta combinations alone, such as Ctrl+arrow between files', () => {
     expect(mediaKeyAction(key('ArrowRight', { ctrlKey: true }))).toBeNull();
     expect(mediaKeyAction(key('ArrowUp', { altKey: true }))).toBeNull();

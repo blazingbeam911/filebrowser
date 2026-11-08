@@ -194,6 +194,8 @@
       "speed": "Slow down or speed up by 0.1×",
       "speedLarge": "Slow down or speed up by 0.5×",
       "speedReset": "Back to normal speed",
+      "frameStep": "Pause and step one frame back or forward (video)",
+      "abLoop": "A-B loop: set the start, set the end, then clear",
       "title": "미디어 플레이어",
       "playPause": "재생/일시정지",
       "seekPercentage": "10%에서 90%까지 탐색",
@@ -1006,6 +1008,9 @@
   },
   "player": {
     "osdSpeed": "Speed {speed}×",
+    "osdAbStart": "A-B loop: start set",
+    "osdAbEnd": "A-B loop: end set",
+    "osdAbCleared": "A-B loop cleared",
     "loop": "반복",
     "captionSize": "캡션 크기",
     "playbackMode": "재생",

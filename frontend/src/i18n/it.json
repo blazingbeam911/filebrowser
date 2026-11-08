@@ -367,6 +367,8 @@
       "speed": "Slow down or speed up by 0.1×",
       "speedLarge": "Slow down or speed up by 0.5×",
       "speedReset": "Back to normal speed",
+      "frameStep": "Pause and step one frame back or forward (video)",
+      "abLoop": "A-B loop: set the start, set the end, then clear",
       "title": "Lettore multimediale",
       "playPause": "Riproduci/Pausa",
       "seekPercentage": "Passa dal 10% al 90%",
@@ -1015,6 +1017,9 @@
   },
   "player": {
     "osdSpeed": "Speed {speed}×",
+    "osdAbStart": "A-B loop: start set",
+    "osdAbEnd": "A-B loop: end set",
+    "osdAbCleared": "A-B loop cleared",
     "loop": "Ripeti",
     "captionSize": "Dimensione didascalie",
     "playbackMode": "Riproduzione",
