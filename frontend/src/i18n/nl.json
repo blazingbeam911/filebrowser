@@ -366,6 +366,11 @@
     "altArrowUp": "Ga naar de bovenliggende map",
     "altArrowDown": "Open het geselecteerde bestand/de geselecteerde map",
     "media": {
+      "seek10": "Seek back or forward 10 seconds",
+      "seek60": "Seek back or forward 60 seconds",
+      "speed": "Slow down or speed up by 0.1×",
+      "speedLarge": "Slow down or speed up by 0.5×",
+      "speedReset": "Back to normal speed",
       "title": "Mediaspeler",
       "playPause": "Afspelen/Pauzeren",
       "seekPercentage": "Zoeken van 10% tot 90%",
@@ -1040,6 +1045,7 @@
     }
   },
   "player": {
+    "osdSpeed": "Speed {speed}×",
     "loop": "Herhalen",
     "captionSize": "Ondertitelingsgrootte",
     "playbackMode": "Afspelen",

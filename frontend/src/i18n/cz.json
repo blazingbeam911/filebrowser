@@ -189,6 +189,11 @@
     "slash": "aktivovat vyhledávání",
     "wiki": "Oficiální dokumenty k aplikaci FileBrowser Quantum",
     "media": {
+      "seek10": "Seek back or forward 10 seconds",
+      "seek60": "Seek back or forward 60 seconds",
+      "speed": "Slow down or speed up by 0.1×",
+      "speedLarge": "Slow down or speed up by 0.5×",
+      "speedReset": "Back to normal speed",
       "title": "Přehrávač médií",
       "playPause": "Spustit/pozastavit přehrávání",
       "seekPercentage": "Přesun od 10 % do 90 %",
@@ -1000,6 +1005,7 @@
     }
   },
   "player": {
+    "osdSpeed": "Speed {speed}×",
     "loop": "Smyčka",
     "captionSize": "Velikost titulků",
     "playbackMode": "Přehrávání",

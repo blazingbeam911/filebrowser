@@ -189,6 +189,11 @@
     "slash": "啟動搜尋",
     "wiki": "FileBrowser Quantum 官方文件",
     "media": {
+      "seek10": "Seek back or forward 10 seconds",
+      "seek60": "Seek back or forward 60 seconds",
+      "speed": "Slow down or speed up by 0.1×",
+      "speedLarge": "Slow down or speed up by 0.5×",
+      "speedReset": "Back to normal speed",
       "title": "媒體播放器",
       "playPause": "播放/暫停",
       "seekPercentage": "從 10% 跳轉到 90%",
@@ -1000,6 +1005,7 @@
     }
   },
   "player": {
+    "osdSpeed": "Speed {speed}×",
     "loop": "循環",
     "captionSize": "字幕大小",
     "playbackMode": "播放",

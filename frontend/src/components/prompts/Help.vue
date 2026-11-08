@@ -137,6 +137,26 @@
           <span>{{ $t("help.media.seek") }}</span>
         </div>
         <div class="shortcut-item">
+          <kbd>Shift + ← / →</kbd> <!-- eslint-disable-line @intlify/vue-i18n/no-raw-text -->
+          <span>{{ $t("help.media.seek10") }}</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>Shift + ↑ / ↓</kbd> <!-- eslint-disable-line @intlify/vue-i18n/no-raw-text -->
+          <span>{{ $t("help.media.seek60") }}</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>[ / ]</kbd> <!-- eslint-disable-line @intlify/vue-i18n/no-raw-text -->
+          <span>{{ $t("help.media.speed") }}</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>Shift + [ / ]</kbd> <!-- eslint-disable-line @intlify/vue-i18n/no-raw-text -->
+          <span>{{ $t("help.media.speedLarge") }}</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>\</kbd> <!-- eslint-disable-line @intlify/vue-i18n/no-raw-text -->
+          <span>{{ $t("help.media.speedReset") }}</span>
+        </div>
+        <div class="shortcut-item">
           <kbd>↑ / ↓</kbd> <!-- eslint-disable-line @intlify/vue-i18n/no-raw-text -->
           <span>{{ $t("help.media.volume") }}</span>
         </div>

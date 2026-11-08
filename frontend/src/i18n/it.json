@@ -362,6 +362,11 @@
     "description": "Puoi visualizzare le opzioni di navigazione di base qui sotto. Per ulteriori informazioni, visita",
     "wiki": "Documentazione ufficiale FileBrowser Quantum",
     "media": {
+      "seek10": "Seek back or forward 10 seconds",
+      "seek60": "Seek back or forward 60 seconds",
+      "speed": "Slow down or speed up by 0.1×",
+      "speedLarge": "Slow down or speed up by 0.5×",
+      "speedReset": "Back to normal speed",
       "title": "Lettore multimediale",
       "playPause": "Riproduci/Pausa",
       "seekPercentage": "Passa dal 10% al 90%",
@@ -1009,6 +1014,7 @@
     }
   },
   "player": {
+    "osdSpeed": "Speed {speed}×",
     "loop": "Ripeti",
     "captionSize": "Dimensione didascalie",
     "playbackMode": "Riproduzione",

@@ -366,6 +366,11 @@
     "altArrowUp": "Joan karpeta gurasora",
     "altArrowDown": "Ireki hautatutako fitxategia/karpeta",
     "media": {
+      "seek10": "Seek back or forward 10 seconds",
+      "seek60": "Seek back or forward 60 seconds",
+      "speed": "Slow down or speed up by 0.1×",
+      "speedLarge": "Slow down or speed up by 0.5×",
+      "speedReset": "Back to normal speed",
       "title": "Multimedia-erreproduzitzailea",
       "playPause": "Erreproduzitu/Pausatu erreprodukzioa",
       "seekPercentage": "Jauzi %10etik %90era",
@@ -1040,6 +1045,7 @@
     }
   },
   "player": {
+    "osdSpeed": "Speed {speed}×",
     "loop": "Begizta",
     "captionSize": "Azpitituluen tamaina",
     "playbackMode": "Erreprodukzioa",

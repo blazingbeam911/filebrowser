@@ -189,6 +189,11 @@
     "slash": "تفعيل البحث",
     "wiki": "مستندات FileBrowser Quantum الرسمية",
     "media": {
+      "seek10": "Seek back or forward 10 seconds",
+      "seek60": "Seek back or forward 60 seconds",
+      "speed": "Slow down or speed up by 0.1×",
+      "speedLarge": "Slow down or speed up by 0.5×",
+      "speedReset": "Back to normal speed",
       "title": "مشغل الوسائط",
       "playPause": "تشغيل/إيقاف التشغيل",
       "seekPercentage": "التقديم من 10% إلى 90%",
@@ -1000,6 +1005,7 @@
     }
   },
   "player": {
+    "osdSpeed": "Speed {speed}×",
     "loop": "تكرار",
     "captionSize": "حجم الترجمة",
     "playbackMode": "التشغيل",

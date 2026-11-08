@@ -189,6 +189,11 @@
     "slash": "הפעל חיפוש",
     "wiki": "מסמכים רשמיים של FileBrowser Quantum",
     "media": {
+      "seek10": "Seek back or forward 10 seconds",
+      "seek60": "Seek back or forward 60 seconds",
+      "speed": "Slow down or speed up by 0.1×",
+      "speedLarge": "Slow down or speed up by 0.5×",
+      "speedReset": "Back to normal speed",
       "title": "נגן מדיה",
       "playPause": "הפעל/השהה נגינה",
       "seekPercentage": "דילוג מ-10% ל-90%",
@@ -1000,6 +1005,7 @@
     }
   },
   "player": {
+    "osdSpeed": "Speed {speed}×",
     "loop": "לולאה",
     "captionSize": "גודל כתוביות",
     "playbackMode": "ניגון",

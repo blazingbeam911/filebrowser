@@ -189,6 +189,11 @@
     "slash": "aramayı etkinleştir",
     "wiki": "FileBrowser Quantum Resmi Dokümanları",
     "media": {
+      "seek10": "Seek back or forward 10 seconds",
+      "seek60": "Seek back or forward 60 seconds",
+      "speed": "Slow down or speed up by 0.1×",
+      "speedLarge": "Slow down or speed up by 0.5×",
+      "speedReset": "Back to normal speed",
       "title": "Medya Oynatıcı",
       "playPause": "Oynat/Duraklat",
       "seekPercentage": "%10'dan %90'a atla",
@@ -1000,6 +1005,7 @@
     }
   },
   "player": {
+    "osdSpeed": "Speed {speed}×",
     "loop": "Döngü",
     "captionSize": "Altyazı boyutu",
     "playbackMode": "Oynatma",

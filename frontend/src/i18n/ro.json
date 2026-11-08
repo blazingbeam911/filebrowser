@@ -189,6 +189,11 @@
     "slash": "activați căutarea",
     "wiki": "FileBrowser Quantum Documente oficiale",
     "media": {
+      "seek10": "Seek back or forward 10 seconds",
+      "seek60": "Seek back or forward 60 seconds",
+      "speed": "Slow down or speed up by 0.1×",
+      "speedLarge": "Slow down or speed up by 0.5×",
+      "speedReset": "Back to normal speed",
       "title": "Player media",
       "playPause": "Redare/Pauză",
       "seekPercentage": "Salt de la 10% la 90%",
@@ -1000,6 +1005,7 @@
     }
   },
   "player": {
+    "osdSpeed": "Speed {speed}×",
     "loop": "Buclă",
     "captionSize": "Dimensiunea subtitrărilor",
     "playbackMode": "Redare",

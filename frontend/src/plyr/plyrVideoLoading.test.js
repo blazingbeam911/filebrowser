@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { enablePlyrVideoLoadingIndicator } from '@/plyr/plyrVideoLoading.js';
 
 function fakePlayer() {
@@ -28,6 +28,9 @@ function startPlayback() {
 }
 
 describe('video loading indicator', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
   it('stays hidden when the fetch stalls but playback continues from the buffer', () => {
     const { player, states } = startPlayback();
     player.emit('stalled');
@@ -38,6 +41,26 @@ describe('video loading indicator', () => {
     const { player, states } = startPlayback();
     player.media.readyState = HTMLMediaElement.HAVE_CURRENT_DATA;
     player.emit('waiting');
+    vi.advanceTimersByTime(300);
     expect(states.at(-1)).toBe(true);
+  });
+
+  it('does not show for a seek that finishes quickly', () => {
+    const { player, states } = startPlayback();
+    player.emit('seeking');
+    player.emit('waiting');
+    vi.advanceTimersByTime(20);
+    player.emit('seeked');
+    player.emit('playing');
+    vi.advanceTimersByTime(1000);
+    expect(states).not.toContain(true);
+  });
+
+  it('hides as soon as loading ends', () => {
+    const { player, states } = startPlayback();
+    player.emit('waiting');
+    vi.advanceTimersByTime(300);
+    player.emit('playing');
+    expect(states.at(-1)).toBe(false);
   });
 });

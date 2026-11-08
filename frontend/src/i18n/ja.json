@@ -189,6 +189,11 @@
     "slash": "検索をアクティブにする",
     "wiki": "FileBrowser Quantum 公式ドキュメント",
     "media": {
+      "seek10": "Seek back or forward 10 seconds",
+      "seek60": "Seek back or forward 60 seconds",
+      "speed": "Slow down or speed up by 0.1×",
+      "speedLarge": "Slow down or speed up by 0.5×",
+      "speedReset": "Back to normal speed",
       "title": "メディアプレーヤー",
       "playPause": "再生/一時停止",
       "seekPercentage": "10%から90%までシーク",
@@ -1000,6 +1005,7 @@
     }
   },
   "player": {
+    "osdSpeed": "Speed {speed}×",
     "loop": "ループ",
     "captionSize": "キャプションサイズ",
     "playbackMode": "再生",

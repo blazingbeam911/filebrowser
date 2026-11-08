@@ -366,6 +366,11 @@
     "altArrowUp": "Отиване в родителската папка",
     "altArrowDown": "Отваряне на избрания файл/папка",
     "media": {
+      "seek10": "Seek back or forward 10 seconds",
+      "seek60": "Seek back or forward 60 seconds",
+      "speed": "Slow down or speed up by 0.1×",
+      "speedLarge": "Slow down or speed up by 0.5×",
+      "speedReset": "Back to normal speed",
       "title": "Медиен плейър",
       "playPause": "Възпроизвеждане/Пауза",
       "seekPercentage": "Прескачане от 10% до 90%",
@@ -1020,6 +1025,7 @@
     }
   },
   "player": {
+    "osdSpeed": "Speed {speed}×",
     "loop": "Повторение",
     "captionSize": "Размер на субтитрите",
     "playbackMode": "Възпроизвеждане",

@@ -189,6 +189,11 @@
     "slash": "aktivera sökning",
     "wiki": "FileBrowser Quantum officiella dokument",
     "media": {
+      "seek10": "Seek back or forward 10 seconds",
+      "seek60": "Seek back or forward 60 seconds",
+      "speed": "Slow down or speed up by 0.1×",
+      "speedLarge": "Slow down or speed up by 0.5×",
+      "speedReset": "Back to normal speed",
       "title": "Mediaspelare",
       "playPause": "Spela/Pausa",
       "seekPercentage": "Sök från 10% till 90%",
@@ -1000,6 +1005,7 @@
     }
   },
   "player": {
+    "osdSpeed": "Speed {speed}×",
     "loop": "Loop",
     "captionSize": "Textstorlek",
     "playbackMode": "Uppspelning",

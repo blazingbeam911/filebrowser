@@ -109,19 +109,6 @@
           <audio :src="raw" :type="req.type" :autoplay="shouldAutoplay" @play="handlePlay" ref="audioElement"></audio>
         </div>
       </div>
-
-      <!-- Double‑tap / seek feedback overlay -->
-      <div
-        class="video-skip-feedback-layer"
-        :class="{
-          'video-skip-feedback-layer--visible': skipFeedbackVisible,
-          'video-skip-feedback-layer--left': skipFeedbackSide === 'left',
-          'video-skip-feedback-layer--right': skipFeedbackSide === 'right',
-        }"
-        aria-hidden="true"
-      >
-        <i :key="skipFeedbackKey" class="material-symbols video-skip-feedback-layer__icon">{{ skipFeedbackIcon }}</i>
-      </div>
     </div>
 
     <!-- Video with plyr -->
@@ -154,18 +141,33 @@
       >
         <LoadingSpinner size="large" />
       </div>
-      <div
-        ref="skipFeedbackLayer"
-        class="video-skip-feedback-layer"
-        :class="{
-          'video-skip-feedback-layer--visible': skipFeedbackVisible,
-          'video-skip-feedback-layer--left': skipFeedbackSide === 'left',
-          'video-skip-feedback-layer--right': skipFeedbackSide === 'right',
-        }"
-        aria-hidden="true"
+    </div>
+
+    <!-- Feedback for seeks, speed and volume, over either player -->
+    <div v-if="osdText" class="media-osd" role="status">{{ osdText }}</div>
+    <div
+      class="media-volume-bar"
+      :class="{ 'media-volume-bar--visible': volumeBarVisible }"
+      aria-hidden="true"
+    >
+      <div class="media-volume-bar__fill" :style="{ height: `${volumeBarPercent}%` }"></div>
+    </div>
+    <div
+      class="video-skip-feedback-layer"
+      :class="{
+        'video-skip-feedback-layer--visible': skipFeedbackVisible,
+        'video-skip-feedback-layer--left': skipFeedbackSide === 'left',
+        'video-skip-feedback-layer--right': skipFeedbackSide === 'right',
+      }"
+      aria-hidden="true"
+    >
+      <span
+        :key="skipFeedbackKey"
+        class="video-skip-feedback-layer__icon"
+        :class="{ 'video-skip-feedback-layer__icon--held': skipFeedbackHeld }"
       >
-        <i :key="skipFeedbackKey" class="material-symbols video-skip-feedback-layer__icon">{{ skipFeedbackIcon }}</i>
-      </div>
+        <svg viewBox="0 0 960 960" focusable="false"><path :d="skipFeedbackPath" /></svg>
+      </span>
     </div>
 
     <!-- Right detection zone – always for video/mobile audio queue button & desktop panel toggle -->
@@ -244,6 +246,12 @@ import { getObjectProperty } from '@/utils/object.js';
 import { globalVars } from '@/utils/constants';
 import { getSubtitleFormatExtension } from '@/utils/subtitles';
 import { PLYR_EDITABLE_SELECTOR, isTextEntryTarget } from '@/plyr/plyrKeyTargets';
+import {
+  parseStoredSpeed,
+  steppedSpeed,
+  mediaKeyAction,
+  seekIconPath,
+} from '@/plyr/plyrMediaKeys.js';
 import { getPreviewURL, getPreviewURLPublic } from '@/api/resources';
 import {
   blockPlyrSeekOnInput,
@@ -284,6 +292,10 @@ const PLYR_CAPTION_SIZE_IDS = ['small', 'medium', 'large', 'xlarge'];
 const PLYR_LOCALSTORAGE_KEY = 'plyr';
 /** Custom field inside Plyr’s JSON blob so caption size travels with other Plyr prefs. */
 const PLYR_CAPTION_SIZE_FIELD = 'captionSize';
+/** Per-device video speed; separate from Plyr's `speed` field, which audio files write too. */
+const VIDEO_SPEED_STORAGE_KEY = 'fbVideoSpeed';
+const AUDIO_SPEED_STORAGE_KEY = 'fbAudioSpeed';
+const OSD_DURATION_MS = 1500;
 let pendingFullscreenResume = false;
 let pendingPipResume = false;
 let pendingResumeTimestamp = 0;
@@ -363,7 +375,8 @@ export default {
       // Gestures
       skipFeedbackVisible: false,
       skipFeedbackSide: 'left',
-      skipFeedbackIcon: 'replay_10',
+      skipFeedbackPath: seekIconPath(-10),
+      skipFeedbackHeld: false,
       skipFeedbackKey: 0,
       skipFeedbackTimer: null,
       skipNextTap: false,
@@ -407,6 +420,13 @@ export default {
       longPressPreviousSpeed: 1,
       speedToastVisible: false,
       speedToastMessage: '',
+
+      // On-screen feedback for the player keys
+      osdText: '',
+      osdTimer: null,
+      volumeBarVisible: false,
+      volumeBarPercent: 0,
+      volumeBarTimer: null,
 
       // Plyr instance
       player: null,
@@ -817,7 +837,7 @@ export default {
         },
         speed: {
           selected: 1,
-          options: [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2],
+          options: [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3, 4],
         },
         disableContextMenu: true,
         seekTime: 10,
@@ -877,6 +897,8 @@ export default {
     this.videoDismissCloseTimer,
     this.videoDismissHintTimer,
     this.skipNextTapTimer,
+    this.osdTimer,
+    this.volumeBarTimer,
   ]) {
       if (timeout) clearTimeout(timeout);
     }
@@ -1259,6 +1281,7 @@ export default {
       });
     },
     handleKeydown(event) {
+      if (this.handleMediaKey(event)) return;
       if (event.repeat) return;
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       const key = event.key.toLowerCase();
@@ -1273,14 +1296,6 @@ export default {
         if (key === 'l') this.toggleSingleLoop();
         return;
       }
-      // left/right arrows for seek feedback
-      if (key === 'arrowleft' || key === 'arrowright') {
-        if (!this.player) return;
-        event.preventDefault();
-        const rewind = key === 'arrowleft';
-        this.flashSkipFeedback(rewind);
-        return;
-      }
       // "Q" key – open/close panel on desktop audio, queue prompt on vids
       if (key === 'q') {
         if (this.previewType === 'audio' && !this.isMobile) {
@@ -1293,6 +1308,106 @@ export default {
           this.showQueuePrompt();
         }
       }
+    },
+    /** Runs a player control if the key is one; returns true when the key was taken. */
+    handleMediaKey(event) {
+      if (!this.player || isTextEntryTarget(event.target)) return false;
+      if (this.previewType !== 'video' && this.previewType !== 'audio') return false;
+      const action = mediaKeyAction(event);
+      if (!action) return false;
+      event.preventDefault();
+      event.stopPropagation();
+      switch (action.type) {
+        case 'seek':
+          this.seekBy(action.seconds, event.repeat);
+          break;
+        case 'volume':
+          this.player.increaseVolume(action.delta);
+          this.showVolumeBar();
+          break;
+        case 'speed':
+          this.setSpeed(steppedSpeed(this.player.speed, action.delta));
+          break;
+        case 'speedReset':
+          this.setSpeed(1);
+          break;
+        default:
+          break;
+      }
+      return true;
+    },
+    seekBy(seconds, held) {
+      const duration = this.player.duration;
+      if (!(duration > 0)) return;
+      this.player.currentTime = Math.min(duration, Math.max(0, this.player.currentTime + seconds));
+      this.flashSkipFeedback(seconds < 0, Math.abs(seconds), held);
+    },
+    setSpeed(speed) {
+      this.player.speed = speed;
+      this.showOsd(this.$t('player.osdSpeed', { speed }));
+    },
+    showVolumeBar() {
+      this.volumeBarPercent = this.player.muted ? 0 : Math.round(this.player.volume * 100);
+      this.volumeBarVisible = true;
+      if (this.volumeBarTimer) clearTimeout(this.volumeBarTimer);
+      this.volumeBarTimer = setTimeout(() => {
+        this.volumeBarVisible = false;
+        this.volumeBarTimer = null;
+      }, OSD_DURATION_MS);
+    },
+    showOsd(text) {
+      if (this.osdTimer) clearTimeout(this.osdTimer);
+      this.osdText = text;
+      this.osdTimer = setTimeout(() => {
+        this.osdText = '';
+        this.osdTimer = null;
+      }, OSD_DURATION_MS);
+    },
+    speedStorageKey() {
+      return this.previewType === 'audio' ? AUDIO_SPEED_STORAGE_KEY : VIDEO_SPEED_STORAGE_KEY;
+    },
+    restoreSpeed() {
+      const media = this.player?.media;
+      if (!media) return;
+      let stored = null;
+      try {
+        stored = parseStoredSpeed(localStorage.getItem(this.speedStorageKey()));
+      } catch {
+        /* storage unavailable: stay at normal speed */
+      }
+      if (stored === null) return;
+      // Loading the stream resets playbackRate to defaultPlaybackRate, and the stream may only
+      // attach on the first play, so both need the value.
+      media.defaultPlaybackRate = stored;
+      media.playbackRate = stored;
+      if (stored !== 1) {
+        this.showOsd(this.$t('player.osdSpeed', { speed: stored }));
+      }
+    },
+    onRateChange() {
+      const media = this.player?.media;
+      if (!media) return;
+      const rate = media.playbackRate;
+      this.syncSpeedMenuLabel();
+      // The touch long-press is a temporary 2x and restores the previous speed on release.
+      if (this.longPressTriggered) return;
+      if (media.defaultPlaybackRate !== rate) media.defaultPlaybackRate = rate;
+      try {
+        localStorage.setItem(this.speedStorageKey(), String(rate));
+      } catch {
+        /* storage unavailable: the speed just isn't remembered */
+      }
+    },
+    /** Plyr leaves its label stale for a speed its menu doesn't list, such as 1.3×. */
+    syncSpeedMenuLabel() {
+      const rate = this.player?.media?.playbackRate;
+      if (!rate || this.player.options?.speed?.includes(rate)) return;
+      const settings = this.player.elements?.settings;
+      const label = settings?.buttons?.speed?.querySelector('.plyr__menu__value');
+      if (label) label.textContent = `${rate}×`;
+      settings?.panels?.speed?.querySelectorAll('[role="menuitemradio"]').forEach((item) => {
+        item.setAttribute('aria-checked', 'false');
+      });
     },
     cyclePlaybackModes() {
       cyclePlaybackModes(this.playbackMode, {
@@ -1476,6 +1591,7 @@ export default {
       }
       this.setupMediaSession();
       this.setupPlyrEvents();
+      this.restoreSpeed();
       if (this.previewType === 'video') {
         this.setupPipControlGuard();
         this.pipPendingResumeCleanup = onPendingInlineResume((snapshot) => {
@@ -2023,6 +2139,8 @@ export default {
       if ((this.previewType === 'video' || this.previewType === 'audio')) {
         this.player.on('enterfullscreen', this.onFullscreenEnter);
         this.player.on('exitfullscreen', this.onFullscreenExit);
+        this.player.on('ratechange', this.onRateChange);
+        this.player.on('ready', this.syncSpeedMenuLabel);
       }
       if (this.previewType === 'video') {
         this.player.on('enterfullscreen', this.applyCaptionSizeClass);
@@ -2325,12 +2443,13 @@ export default {
         this.clearEdgeTapGestureState();
       };
     },
-    flashSkipFeedback(rewind) {
+    flashSkipFeedback(rewind, seconds = 10, held = false) {
       if (this.skipFeedbackTimer) {
         clearTimeout(this.skipFeedbackTimer);
       }
       this.skipFeedbackSide = rewind ? 'left' : 'right';
-      this.skipFeedbackIcon = rewind ? 'replay_10' : 'forward_10';
+      this.skipFeedbackPath = seekIconPath(rewind ? -seconds : seconds);
+      this.skipFeedbackHeld = Boolean(held);
       this.skipFeedbackKey += 1;
       this.skipFeedbackVisible = true;
       this.skipFeedbackTimer = setTimeout(() => {
@@ -3168,6 +3287,7 @@ export default {
 }
 
 .plyr-viewer {
+  position: relative;
   height: 100%;
   width: 100%;
 }
@@ -3481,6 +3601,52 @@ export default {
 }
 
 /* Double-tap / double-click seek feedback (left/right third of video) */
+.media-osd {
+  position: absolute;
+  top: 1em;
+  left: 1em;
+  z-index: 9;
+  padding: 0.25em 0.6em;
+  border-radius: 0.3em;
+  background: rgb(0 0 0 / 60%);
+  color: #fff;
+  font-size: 1.1rem;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.media-volume-bar {
+  position: absolute;
+  top: 50%;
+  right: calc(var(--fab-size) + 2rem); /* clear of the next-file button at the edge */
+  z-index: 9;
+  box-sizing: border-box;
+  width: 2.5rem;
+  height: min(45%, 18rem);
+  overflow: hidden;
+  border: 2px solid var(--primaryColor);
+  border-radius: 1rem;
+  background: var(--background);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition: opacity 0.25s ease;
+}
+
+.media-volume-bar--visible {
+  opacity: 1;
+  transition-duration: 0.05s;
+}
+
+.media-volume-bar__fill {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: var(--primaryColor);
+  transition: height 0.08s linear;
+}
+
 .video-skip-feedback-layer {
   position: absolute;
   inset: 0;
@@ -3501,11 +3667,7 @@ export default {
   padding-right: min(22%, 7rem);
 }
 
-/*
- * Global fonts.css sets `.material-symbols { font-size: 24px }`.
- * Use high specificity and flex-shrink: 0 so the flex parent cannot squeeze the glyph.
- */
-.video-skip-feedback-layer i.material-symbols.video-skip-feedback-layer__icon {
+.video-skip-feedback-layer__icon {
   flex-shrink: 0;
   font-size: clamp(2.5rem, 7vmin, 6rem);
   line-height: 1;
@@ -3513,11 +3675,34 @@ export default {
   filter: drop-shadow(0 2px 16px rgb(0 0 0 / 85%));
   opacity: 0;
   transform: scale(0.55);
-  font-variation-settings: 'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 40;
 }
 
-.video-skip-feedback-layer--visible i.material-symbols.video-skip-feedback-layer__icon {
+.video-skip-feedback-layer__icon svg {
+  display: block;
+  width: 1em;
+  height: 1em;
+  fill: currentcolor;
+}
+
+.video-skip-feedback-layer--visible .video-skip-feedback-layer__icon {
   animation: video-skip-feedback-pop 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+/* Key repeat restarts the animation; holding must keep the icon on screen, not stuck at its start. */
+.video-skip-feedback-layer--visible .video-skip-feedback-layer__icon--held {
+  animation: video-skip-feedback-hold 0.7s linear forwards;
+}
+
+@keyframes video-skip-feedback-hold {
+  0%,
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1);
+  }
 }
 
 @keyframes video-skip-feedback-pop {

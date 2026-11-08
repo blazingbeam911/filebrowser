@@ -189,6 +189,11 @@
     "slash": "активировать поиск",
     "wiki": "Официальные документы FileBrowser Quantum",
     "media": {
+      "seek10": "Seek back or forward 10 seconds",
+      "seek60": "Seek back or forward 60 seconds",
+      "speed": "Slow down or speed up by 0.1×",
+      "speedLarge": "Slow down or speed up by 0.5×",
+      "speedReset": "Back to normal speed",
       "title": "Медиаплеер",
       "playPause": "Воспроизведение/Пауза",
       "seekPercentage": "Переход от 10% до 90%",
@@ -1000,6 +1005,7 @@
     }
   },
   "player": {
+    "osdSpeed": "Speed {speed}×",
     "loop": "Повтор",
     "captionSize": "Размер субтитров",
     "playbackMode": "Воспроизведение",

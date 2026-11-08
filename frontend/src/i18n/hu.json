@@ -189,6 +189,11 @@
     "slash": "keresés aktiválása",
     "wiki": "FileBrowser Quantum hivatalos dokumentumok",
     "media": {
+      "seek10": "Seek back or forward 10 seconds",
+      "seek60": "Seek back or forward 60 seconds",
+      "speed": "Slow down or speed up by 0.1×",
+      "speedLarge": "Slow down or speed up by 0.5×",
+      "speedReset": "Back to normal speed",
       "title": "Médialejátszó",
       "playPause": "Lejátszás/Szünet",
       "seekPercentage": "Ugrás 10%-tól 90%-ig",
@@ -1000,6 +1005,7 @@
     }
   },
   "player": {
+    "osdSpeed": "Speed {speed}×",
     "loop": "Ismétlés",
     "captionSize": "Felirat mérete",
     "playbackMode": "Lejátszás",

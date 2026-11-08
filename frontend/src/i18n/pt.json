@@ -189,6 +189,11 @@
     "slash": "ativar a pesquisa",
     "wiki": "Documentos oficiais do FileBrowser Quantum",
     "media": {
+      "seek10": "Seek back or forward 10 seconds",
+      "seek60": "Seek back or forward 60 seconds",
+      "speed": "Slow down or speed up by 0.1×",
+      "speedLarge": "Slow down or speed up by 0.5×",
+      "speedReset": "Back to normal speed",
       "title": "Leitor multimédia",
       "playPause": "Reproduzir/Pausar",
       "seekPercentage": "Avançar de 10% a 90%",
@@ -1000,6 +1005,7 @@
     }
   },
   "player": {
+    "osdSpeed": "Speed {speed}×",
     "loop": "Repetir",
     "captionSize": "Tamanho da legenda",
     "playbackMode": "Reprodução",

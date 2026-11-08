@@ -189,6 +189,11 @@
     "slash": "검색 활성화",
     "wiki": "FileBrowser 퀀텀 공식 문서",
     "media": {
+      "seek10": "Seek back or forward 10 seconds",
+      "seek60": "Seek back or forward 60 seconds",
+      "speed": "Slow down or speed up by 0.1×",
+      "speedLarge": "Slow down or speed up by 0.5×",
+      "speedReset": "Back to normal speed",
       "title": "미디어 플레이어",
       "playPause": "재생/일시정지",
       "seekPercentage": "10%에서 90%까지 탐색",
@@ -1000,6 +1005,7 @@
     }
   },
   "player": {
+    "osdSpeed": "Speed {speed}×",
     "loop": "반복",
     "captionSize": "캡션 크기",
     "playbackMode": "재생",
