@@ -83,6 +83,14 @@ describe('createFrameTracker', () => {
     expect(tracker.frameSeconds()).toBeCloseTo(0.04);
   });
 
+  it('reports a frame rate only after enough frames', () => {
+    const video = fakeVideo();
+    const tracker = createFrameTracker(video, () => {});
+    expect(tracker.measuredFrameRate()).toBeNull();
+    for (let i = 0; i < 6; i++) video.present(1 + i * 0.04, 10 + i);
+    expect(tracker.measuredFrameRate()).toBeCloseTo(25);
+  });
+
   it('does not measure while paused or at high speed', () => {
     const video = fakeVideo();
     const tracker = createFrameTracker(video, () => {});

@@ -8,6 +8,7 @@
 export const DEFAULT_FRAME_SECONDS = 1 / 24;
 const MAX_SAMPLES = 31;
 const MAX_FRAME_SECONDS = 1;
+const MIN_SAMPLES_FOR_RATE = 5;
 
 /** The median of the measured frame lengths: one late frame or seek shouldn't move it. */
 export function medianFrameLength(gaps) {
@@ -81,6 +82,8 @@ export function createFrameTracker(video, onFrame) {
     /** The time of the frame on screen, or null before the first frame. */
     mediaTime: () => currentTime,
     frameSeconds: () => medianFrameLength(gaps),
+    /** Frames per second, or null until enough frames have been measured. */
+    measuredFrameRate: () => (gaps.length < MIN_SAMPLES_FOR_RATE ? null : 1 / medianFrameLength(gaps)),
     stop() {
       stopped = true;
       if (handle !== null) video.cancelVideoFrameCallback?.(handle);

@@ -40,6 +40,10 @@ export function mediaKeyAction(event) {
       return { type: 'frameStep', direction: 1 };
     case 'L':
       return shiftKey ? { type: 'abLoop' } : null;
+    case 'i':
+      return { type: 'stats' };
+    case 'I':
+      return shiftKey ? { type: 'statsBrief' } : null;
     default:
       return null;
   }

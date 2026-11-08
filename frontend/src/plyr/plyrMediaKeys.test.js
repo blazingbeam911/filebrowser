@@ -54,6 +54,12 @@ describe('mediaKeyAction', () => {
     expect(mediaKeyAction(key('L'))).toBeNull();
   });
 
+  it('maps the stats keys', () => {
+    expect(mediaKeyAction(key('i'))).toEqual({ type: 'stats' });
+    expect(mediaKeyAction(key('I', { shiftKey: true }))).toEqual({ type: 'statsBrief' });
+    expect(mediaKeyAction(key('I'))).toBeNull();
+  });
+
   it('leaves Ctrl, Alt and Meta combinations alone, such as Ctrl+arrow between files', () => {
     expect(mediaKeyAction(key('ArrowRight', { ctrlKey: true }))).toBeNull();
     expect(mediaKeyAction(key('ArrowUp', { altKey: true }))).toBeNull();

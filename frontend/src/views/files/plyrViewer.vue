@@ -145,6 +145,12 @@
 
     <!-- Feedback for seeks, speed and volume, over either player -->
     <div v-if="osdText" class="media-osd" role="status">{{ osdText }}</div>
+    <dl v-if="statsVisible" class="media-stats">
+      <template v-for="row in statsRows" :key="row.label">
+        <dt>{{ row.label }}</dt>
+        <dd>{{ row.value }}</dd>
+      </template>
+    </dl>
     <div
       class="media-volume-bar"
       :class="{ 'media-volume-bar--visible': volumeBarVisible }"
@@ -265,6 +271,7 @@ import {
   abLoopMarkers,
   nextAbLoop,
 } from '@/plyr/plyrAbLoop.js';
+import { buildStatsRows } from '@/plyr/plyrStats.js';
 import { getPreviewURL, getPreviewURLPublic } from '@/api/resources';
 import {
   blockPlyrSeekOnInput,
@@ -311,6 +318,10 @@ const AUDIO_SPEED_STORAGE_KEY = 'fbAudioSpeed';
 const OSD_DURATION_MS = 1500;
 const FRAME_STEP_TIMEOUT_MS = 1500;
 const WHEEL_VOLUME_STEP = 0.05;
+const STATS_BRIEF_MS = 5000;
+const STATS_UPDATE_MS = 1000;
+// Stays on from one file to the next, until turned off or the page reloads.
+let statsPinned = false;
 // Places in the viewer where the wheel scrolls content.
 const WHEEL_SCROLLS_HERE = '.plyr__menu__container, .lyrics-panel, .lyrics-mobile';
 const AB_LOOP_POLL_MS = 30;
@@ -446,6 +457,10 @@ export default {
       volumeBarPercent: 0,
       volumeBarTimer: null,
       wheelAccumulated: 0,
+      statsVisible: false,
+      statsRows: [],
+      statsUpdateTimer: null,
+      statsBriefTimer: null,
 
       frameTracker: null,
       frameStepOrigin: null,
@@ -1367,6 +1382,12 @@ export default {
         case 'abLoop':
           if (!event.repeat) this.cycleAbLoop();
           break;
+        case 'stats':
+          if (!event.repeat) this.toggleStats();
+          break;
+        case 'statsBrief':
+          if (!event.repeat) this.showStatsBriefly();
+          break;
         default:
           break;
       }
@@ -1387,6 +1408,7 @@ export default {
       this.frameTracker = createFrameTracker(this.player.media, this.onVideoFrame);
     },
     teardownFrameControls() {
+      this.stopStats();
       this.frameTracker?.stop();
       this.frameTracker = null;
       if (this.frameStepTimer) clearTimeout(this.frameStepTimer);
@@ -1466,6 +1488,42 @@ export default {
     onAbLoopSeeking() {
       if (!abLoopActive(this.abLoop) || !this.player?.media) return;
       this.abLoopArmed = this.player.media.currentTime < this.abLoop.b;
+    },
+    toggleStats() {
+      if (this.statsVisible) {
+        statsPinned = false;
+        this.stopStats();
+        return;
+      }
+      statsPinned = true;
+      this.startStats();
+    },
+    showStatsBriefly() {
+      if (statsPinned) return;
+      this.startStats();
+      if (this.statsBriefTimer) clearTimeout(this.statsBriefTimer);
+      this.statsBriefTimer = setTimeout(this.stopStats, STATS_BRIEF_MS);
+    },
+    startStats() {
+      this.updateStats();
+      this.statsVisible = true;
+      if (!this.statsUpdateTimer) this.statsUpdateTimer = setInterval(this.updateStats, STATS_UPDATE_MS);
+    },
+    stopStats() {
+      if (this.statsUpdateTimer) clearInterval(this.statsUpdateTimer);
+      if (this.statsBriefTimer) clearTimeout(this.statsBriefTimer);
+      this.statsUpdateTimer = null;
+      this.statsBriefTimer = null;
+      this.statsVisible = false;
+    },
+    updateStats() {
+      if (!this.player?.media) return;
+      this.statsRows = buildStatsRows({
+        media: this.player.media,
+        file: this.req,
+        frameRate: this.frameTracker?.measuredFrameRate() ?? null,
+        devicePixelRatio: window.devicePixelRatio || 1,
+      });
     },
     handleWheelVolume(event) {
       if (!this.player || event.ctrlKey || event.metaKey || event.altKey) return;
@@ -1749,6 +1807,7 @@ export default {
       this.setupScrubPreview();
       this.setupVideoLoadingIndicator();
       this.setupFrameTracking();
+      if (statsPinned) this.startStats();
       this.resumePlaybackAfterNavigation();
       if (this.previewType === 'video') {
         if (!this.inlineResumeSnapshot && !this.pipHandoffSeekSeconds) {
@@ -3781,6 +3840,39 @@ export default {
   font-size: 1.1rem;
   font-variant-numeric: tabular-nums;
   pointer-events: none;
+}
+
+.media-stats {
+  position: absolute;
+  top: 3.4rem;
+  left: 1rem;
+  z-index: 9;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.1rem 0.9rem;
+  max-width: min(34rem, calc(100% - 2rem));
+  max-height: calc(100% - 9rem);
+  margin: 0;
+  padding: 0.6rem 0.8rem;
+  overflow: hidden;
+  border: 1px solid var(--divider);
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--background) 88%, transparent);
+  color: var(--textPrimary);
+  font-size: 0.8rem;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
+  pointer-events: none;
+}
+
+.media-stats dt {
+  color: var(--textSecondary);
+}
+
+.media-stats dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .media-volume-bar {

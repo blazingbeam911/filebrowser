@@ -165,6 +165,14 @@
           <span>{{ $t("help.media.abLoop") }}</span>
         </div>
         <div class="shortcut-item">
+          <kbd>I</kbd> <!-- eslint-disable-line @intlify/vue-i18n/no-raw-text -->
+          <span>{{ $t("help.media.stats") }}</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>Shift + I</kbd> <!-- eslint-disable-line @intlify/vue-i18n/no-raw-text -->
+          <span>{{ $t("help.media.statsBrief") }}</span>
+        </div>
+        <div class="shortcut-item">
           <kbd>↑ / ↓</kbd> <!-- eslint-disable-line @intlify/vue-i18n/no-raw-text -->
           <span>{{ $t("help.media.volume") }}</span>
         </div>
