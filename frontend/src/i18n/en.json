@@ -340,7 +340,7 @@
     "mouseActions": "Mouse Actions",
     "fileOperations": "File Operations",
     "click": "select file or folder",
-    "dbClick": "Double click on a empty space to select all items",
+    "dbClick": "Double click on empty space to go up one folder",
     "marqueeSelect": "select multiple files or folders by dragging on empty space",
     "ctrl": {
       "f1": "Switch to list view",
