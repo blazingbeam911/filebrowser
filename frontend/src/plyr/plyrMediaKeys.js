@@ -42,6 +42,8 @@ export function mediaKeyAction(event) {
       return shiftKey ? { type: 'abLoop' } : null;
     case 'i':
       return { type: 'stats' };
+    case 't':
+      return { type: 'theater' };
     case 'I':
       return shiftKey ? { type: 'statsBrief' } : null;
     default:

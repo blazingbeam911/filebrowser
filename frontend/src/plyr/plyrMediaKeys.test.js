@@ -60,6 +60,10 @@ describe('mediaKeyAction', () => {
     expect(mediaKeyAction(key('I'))).toBeNull();
   });
 
+  it('maps theater mode', () => {
+    expect(mediaKeyAction(key('t'))).toEqual({ type: 'theater' });
+  });
+
   it('leaves Ctrl, Alt and Meta combinations alone, such as Ctrl+arrow between files', () => {
     expect(mediaKeyAction(key('ArrowRight', { ctrlKey: true }))).toBeNull();
     expect(mediaKeyAction(key('ArrowUp', { altKey: true }))).toBeNull();

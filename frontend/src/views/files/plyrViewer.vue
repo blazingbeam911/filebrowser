@@ -272,6 +272,13 @@ import {
   nextAbLoop,
 } from '@/plyr/plyrAbLoop.js';
 import { buildStatsRows } from '@/plyr/plyrStats.js';
+import {
+  THEATER_BAR_HIDDEN_CLASS,
+  THEATER_CLASS,
+  claimTheaterLayout,
+  releaseTheaterLayout,
+} from '@/utils/theaterMode.js';
+import { holdVideoFrame, releaseVideoFrame, settleVideoFrame } from '@/utils/videoSwitchHold.js';
 import { getPreviewURL, getPreviewURLPublic } from '@/api/resources';
 import {
   blockPlyrSeekOnInput,
@@ -318,6 +325,9 @@ const AUDIO_SPEED_STORAGE_KEY = 'fbAudioSpeed';
 const OSD_DURATION_MS = 1500;
 const FRAME_STEP_TIMEOUT_MS = 1500;
 const WHEEL_VOLUME_STEP = 0.05;
+const THEATER_STORAGE_KEY = 'fbTheaterMode';
+const THEATER_BAR_LEAVE_MS = 250;
+const VIDEO_SWITCH_SETTLE_MS = 1500;
 const STATS_BRIEF_MS = 5000;
 const STATS_UPDATE_MS = 1000;
 // Stays on from one file to the next, until turned off or the page reloads.
@@ -326,6 +336,8 @@ let statsPinned = false;
 const WHEEL_SCROLLS_HERE = '.plyr__menu__container, .lyrics-panel, .lyrics-mobile';
 const AB_LOOP_POLL_MS = 30;
 let pendingFullscreenResume = false;
+// Set while moving between files, so hidden controls don't flash up on the next player.
+let pendingControlsHidden = false;
 let pendingPipResume = false;
 let pendingResumeTimestamp = 0;
 let mediaSessionOwner = 0;
@@ -461,6 +473,9 @@ export default {
       statsRows: [],
       statsUpdateTimer: null,
       statsBriefTimer: null,
+      theaterMode: false,
+      theaterHeader: null,
+      theaterLeaveTimer: null,
 
       frameTracker: null,
       frameStepOrigin: null,
@@ -922,6 +937,7 @@ export default {
   mounted() {
     initPipSession();
     this.hookEvents();
+    this.setupTheater();
     if (this.previewType === "audio") {
       this.loadAudioMetadata();
     }
@@ -934,6 +950,7 @@ export default {
   },
   beforeUnmount() {
     this.viewerUnmounted = true;
+    this.teardownTheater();
     // Cleanup timeouts
     for (const timeout of [this.toastTimeout,
     this.skipFeedbackTimer,
@@ -1133,6 +1150,10 @@ export default {
       if (this.player) {
         if (isTransition && !inPip) {
           pendingFullscreenResume = this.player.fullscreen?.active || false;
+          if (this.previewType === 'video' && !pendingFullscreenResume && media) holdVideoFrame(media);
+          pendingControlsHidden = this.previewType === 'video'
+            && this.player.playing
+            && Boolean(this.player.elements?.container?.classList.contains('plyr--hide-controls'));
           pendingPipResume = false;
           pendingResumeTimestamp = Date.now();
         }
@@ -1359,7 +1380,7 @@ export default {
       if (this.previewType !== 'video' && this.previewType !== 'audio') return false;
       const action = mediaKeyAction(event);
       if (!action) return false;
-      if (action.type === 'frameStep' && this.previewType !== 'video') return false;
+      if ((action.type === 'frameStep' || action.type === 'theater') && this.previewType !== 'video') return false;
       event.preventDefault();
       event.stopPropagation();
       switch (action.type) {
@@ -1385,6 +1406,9 @@ export default {
         case 'stats':
           if (!event.repeat) this.toggleStats();
           break;
+        case 'theater':
+          if (!event.repeat) this.toggleTheater();
+          break;
         case 'statsBrief':
           if (!event.repeat) this.showStatsBriefly();
           break;
@@ -1406,6 +1430,7 @@ export default {
     setupFrameTracking() {
       if (this.previewType !== 'video' || !this.player?.media) return;
       this.frameTracker = createFrameTracker(this.player.media, this.onVideoFrame);
+      if (!this.frameTracker) this.player.on('playing', releaseVideoFrame);
     },
     teardownFrameControls() {
       this.stopStats();
@@ -1418,6 +1443,7 @@ export default {
       this.abLoopPollTimer = null;
     },
     onVideoFrame(mediaTime) {
+      releaseVideoFrame();
       if (this.frameStepOrigin !== null && mediaTime !== this.frameStepOrigin) this.finishFrameStep();
       this.checkAbLoop(mediaTime);
     },
@@ -1488,6 +1514,54 @@ export default {
     onAbLoopSeeking() {
       if (!abLoopActive(this.abLoop) || !this.player?.media) return;
       this.abLoopArmed = this.player.media.currentTime < this.abLoop.b;
+    },
+    setupTheater() {
+      if (this.previewType !== 'video') return;
+      claimTheaterLayout();
+      try {
+        this.theaterMode = localStorage.getItem(THEATER_STORAGE_KEY) === '1';
+      } catch {
+        /* storage unavailable: start in the normal layout */
+      }
+      this.theaterHeader = document.querySelector('header.flexbar');
+      this.theaterHeader?.addEventListener('mouseleave', this.onTheaterHeaderLeave);
+      this.applyTheater();
+    },
+    teardownTheater() {
+      if (this.theaterLeaveTimer) clearTimeout(this.theaterLeaveTimer);
+      this.theaterLeaveTimer = null;
+      this.theaterHeader?.removeEventListener('mouseleave', this.onTheaterHeaderLeave);
+      this.theaterHeader = null;
+      releaseTheaterLayout();
+    },
+    toggleTheater() {
+      this.theaterMode = !this.theaterMode;
+      try {
+        localStorage.setItem(THEATER_STORAGE_KEY, this.theaterMode ? '1' : '0');
+      } catch {
+        /* storage unavailable: it just isn't remembered */
+      }
+      this.applyTheater();
+    },
+    applyTheater() {
+      const root = document.documentElement;
+      root.classList.toggle(THEATER_CLASS, this.theaterMode);
+      if (!this.theaterMode) root.classList.remove(THEATER_BAR_HIDDEN_CLASS);
+      this.syncTheaterBar();
+    },
+    /** The top bar follows Plyr's controls, but never disappears from under the mouse. */
+    syncTheaterBar() {
+      // Before the player exists, the bar stays as the previous file left it.
+      if (!this.player?.elements?.container) return;
+      const root = document.documentElement;
+      const hidden = this.theaterMode && this.player.elements.container.classList.contains('plyr--hide-controls');
+      if (hidden && this.theaterHeader?.matches(':hover')) return;
+      root.classList.toggle(THEATER_BAR_HIDDEN_CLASS, hidden);
+    },
+    onTheaterHeaderLeave() {
+      if (this.theaterLeaveTimer) clearTimeout(this.theaterLeaveTimer);
+      // Moving onto the video brings the controls back; give that a moment to happen first.
+      this.theaterLeaveTimer = setTimeout(this.syncTheaterBar, THEATER_BAR_LEAVE_MS);
     },
     toggleStats() {
       if (this.statsVisible) {
@@ -1781,6 +1855,11 @@ export default {
       await this.reconcilePipSessionOnMount();
       if (this.viewerUnmounted || this.plyrTeardownDone || !this.mediaElement) return;
       this.player = new Plyr(this.mediaElement, this.plyrOptions);
+      if (this.previewType === 'video') settleVideoFrame(VIDEO_SWITCH_SETTLE_MS);
+      if (pendingControlsHidden) {
+        pendingControlsHidden = false;
+        if (this.previewType === 'video') this.player.elements?.container?.classList.add('plyr--hide-controls');
+      }
       if (this.previewType === 'video' && !this.shouldAttachVideoStream) {
         this.nativePlayerPlay = this.player.play.bind(this.player);
         this.player.play = () => {
@@ -2351,6 +2430,8 @@ export default {
         this.player.on('ready', this.syncSpeedMenuLabel);
       }
       if (this.previewType === 'video') {
+        this.player.on('controlshidden', this.syncTheaterBar);
+        this.player.on('controlsshown', this.syncTheaterBar);
         this.player.on('enterfullscreen', this.applyCaptionSizeClass);
         this.player.on('exitfullscreen', this.applyCaptionSizeClass);
       }
@@ -3873,6 +3954,31 @@ export default {
 .media-stats dd {
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+/* Theater mode: the video takes the full height and the top bar floats over it. */
+html.fb-theater #main {
+  padding-top: 0;
+}
+
+html.fb-theater header.flexbar {
+  z-index: 6;
+  transition: opacity 0.2s ease;
+}
+
+html.fb-theater-bar-hidden header.flexbar {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* --header-height is in em, which would resolve against these elements' own font sizes. */
+html.fb-theater .plyr-viewer:not(:fullscreen) .media-osd {
+  top: calc(5.1rem + var(--safe-area-top));
+}
+
+html.fb-theater .plyr-viewer:not(:fullscreen) .media-stats {
+  top: calc(7.4rem + var(--safe-area-top));
+  max-height: calc(100% - 13rem - var(--safe-area-top));
 }
 
 .media-volume-bar {
