@@ -58,13 +58,13 @@ html.fb-theater-bar-hidden header.flexbar {
   pointer-events: none;
 }
 
-/* The image viewer in fullscreen has the whole screen to itself */
-html.fb-image-fullscreen header.flexbar,
-html.fb-image-fullscreen #sidebar {
+/* An image or video in fullscreen has the whole screen to itself */
+html.fb-page-fullscreen header.flexbar,
+html.fb-page-fullscreen #sidebar {
   display: none;
 }
 
-html.fb-image-fullscreen #main {
+html.fb-page-fullscreen #main {
   padding-top: 0;
   padding-left: 0 !important;
 }

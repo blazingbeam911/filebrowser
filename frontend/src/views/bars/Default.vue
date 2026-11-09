@@ -24,7 +24,7 @@
       class="menu-button image-fullscreen-button"
       icon="fullscreen"
       :label="$t('general.fullscreen')"
-      @action="toggleImageFullscreen"
+      @action="togglePageFullscreen"
     />
     <action
       v-if="showHeaderSwitchView && !disableNavButtons"
@@ -51,7 +51,7 @@ import { getters, state, mutations } from "@/store";
 import Action from "@/components/Action.vue";
 import { globalVars } from "@/utils/constants";
 import { url } from "@/utils";
-import { imageFullscreen, toggleImageFullscreen } from "@/utils/imageFullscreen.js";
+import { pageFullscreen, togglePageFullscreen } from "@/utils/pageFullscreen.js";
 
 export default {
   name: "UnifiedHeader",
@@ -65,7 +65,7 @@ export default {
   },
   computed: {
     imageFullscreenAvailable() {
-      return imageFullscreen.available;
+      return pageFullscreen.imageShowing;
     },
     getTopTitle() {
       if (getters.isSettings()) {
@@ -162,7 +162,7 @@ export default {
     },
   },
   methods: {
-    toggleImageFullscreen,
+    togglePageFullscreen,
     openSearch() {
       if (!state.isSearchActive) {
         mutations.closeHovers();

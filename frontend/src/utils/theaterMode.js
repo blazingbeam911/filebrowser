@@ -1,6 +1,6 @@
 import { effectScope, watch } from 'vue';
 import { getters, state } from '@/store/index.ts';
-import { imageFullscreen } from '@/utils/imageFullscreen.js';
+import { mediaMayFollow } from '@/utils/pageFullscreen.js';
 
 export const THEATER_CLASS = 'fb-theater';
 export const THEATER_BAR_HIDDEN_CLASS = 'fb-theater-bar-hidden';
@@ -41,12 +41,6 @@ export function videoMayFollow() {
   return getters.currentView() === 'preview' && getters.previewType() === 'video';
 }
 
-function theaterMediaMayFollow() {
-  if (state.navigation.isTransitioning) return true;
-  if (getters.currentView() !== 'preview') return false;
-  return ['video', 'image'].includes(getters.previewType()) || imageFullscreen.available;
-}
-
 function removeClasses() {
   document.documentElement.classList.remove(THEATER_CLASS, THEATER_BAR_HIDDEN_CLASS);
 }
@@ -64,14 +58,14 @@ export function claimTheaterLayout() {
  */
 export function releaseTheaterLayout() {
   if (watching) return;
-  if (!theaterMediaMayFollow()) {
+  if (!mediaMayFollow()) {
     removeClasses();
     return;
   }
   // Detached: this runs while a component unmounts, and a watcher created there would stop with it.
   watching = effectScope(true);
   watching.run(() => {
-    watch(theaterMediaMayFollow, (mayFollow) => {
+    watch(mediaMayFollow, (mayFollow) => {
       if (mayFollow) return;
       claimTheaterLayout();
       removeClasses();

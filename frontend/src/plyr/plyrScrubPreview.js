@@ -161,6 +161,7 @@ export function fitScrubPreviewImageSize(
 export function getScrubPreviewMount(player) {
   const fsEl = document.fullscreenElement ?? document.webkitFullscreenElement ?? null;
   const container = player?.elements?.container;
+  if (fsEl === document.documentElement && container instanceof HTMLElement) return container;
   if (fsEl instanceof HTMLElement) {
     if (container instanceof HTMLElement && (fsEl === container || fsEl.contains(container))) {
       return fsEl;

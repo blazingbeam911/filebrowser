@@ -281,6 +281,7 @@ import {
   writeTheaterSetting,
 } from '@/utils/theaterMode.js';
 import { holdVideoFrame, releaseVideoFrame, settleVideoFrame } from '@/utils/videoSwitchHold.js';
+import { pageFullscreen } from '@/utils/pageFullscreen.js';
 import { getPreviewURL, getPreviewURLPublic } from '@/api/resources';
 import {
   blockPlyrSeekOnInput,
@@ -919,7 +920,8 @@ export default {
           fallback: true,
           // iPhone Safari has no element Fullscreen API; only video.webkitEnterFullscreen() hides the browser UI.
           iosNative: true,
-          container: '.plyr-viewer',
+          // The whole page, which outlives this viewer, so moving between files stays fullscreen.
+          container: 'html',
         },
         iconUrl: `${globalVars.baseURL}public/static/img/plyr.svg`,
         // Blob/async tracks need addtrack → captions.update; otherwise meta never fills and toggle CC throws (track undefined).
@@ -1151,7 +1153,9 @@ export default {
       if (this.player) {
         if (isTransition && !inPip) {
           pendingFullscreenResume = this.player.fullscreen?.active || false;
-          if (this.previewType === 'video' && !pendingFullscreenResume && media) holdVideoFrame(media);
+          if (this.previewType === 'video' && media && (!pendingFullscreenResume || pageFullscreen.active)) {
+            holdVideoFrame(media);
+          }
           pendingControlsHidden = this.previewType === 'video'
             && this.player.playing
             && Boolean(this.player.elements?.container?.classList.contains('plyr--hide-controls'));
@@ -1847,10 +1851,6 @@ export default {
       if (this.viewerUnmounted || this.plyrTeardownDone || !this.mediaElement) return;
       this.player = new Plyr(this.mediaElement, this.plyrOptions);
       if (this.previewType === 'video') settleVideoFrame(VIDEO_SWITCH_SETTLE_MS);
-      if (pendingControlsHidden) {
-        pendingControlsHidden = false;
-        if (this.previewType === 'video') this.player.elements?.container?.classList.add('plyr--hide-controls');
-      }
       if (this.previewType === 'video' && !this.shouldAttachVideoStream) {
         this.nativePlayerPlay = this.player.play.bind(this.player);
         this.player.play = () => {
@@ -1863,6 +1863,16 @@ export default {
       }
       this.setupMediaSession();
       this.setupPlyrEvents();
+      // Already fullscreen from the previous file: no change event will tell this player.
+      if (this.previewType === 'video' && pageFullscreen.active) this.player.fullscreen?.onChange();
+      if (pendingControlsHidden) {
+        pendingControlsHidden = false;
+        if (this.previewType === 'video') {
+          this.player.elements?.container?.classList.add('plyr--hide-controls');
+          // The line above arms a timer that shows the controls while this player is still paused.
+          clearTimeout(this.player.timers?.controls);
+        }
+      }
       this.restoreSpeed();
       if (this.previewType === 'video') {
         this.setupPipControlGuard();
@@ -2118,7 +2128,7 @@ export default {
       const isStale = Date.now() - pendingResumeTimestamp > 3000;
       if (pendingFullscreenResume) {
         pendingFullscreenResume = false;
-        if (!isStale) this.player.fullscreen?.enter();
+        if (!isStale && !this.player.fullscreen?.active) this.player.fullscreen?.enter();
       }
       if (pendingPipResume) {
         pendingPipResume = false;
@@ -3948,11 +3958,11 @@ export default {
 }
 
 /* --header-height is in em, which would resolve against these elements' own font sizes. */
-html.fb-theater .plyr-viewer:not(:fullscreen) .media-osd {
+html.fb-theater:not(.fb-page-fullscreen) .media-osd {
   top: calc(5.1rem + var(--safe-area-top));
 }
 
-html.fb-theater .plyr-viewer:not(:fullscreen) .media-stats {
+html.fb-theater:not(.fb-page-fullscreen) .media-stats {
   top: calc(7.4rem + var(--safe-area-top));
   max-height: calc(100% - 13rem - var(--safe-area-top));
 }

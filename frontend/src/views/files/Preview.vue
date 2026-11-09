@@ -105,11 +105,11 @@ import {
 } from "@/plyr/pipSession.js";
 import { isPdfFile } from "@/utils/mediaFile";
 import {
-  escapeLeavesImageFullscreen,
-  exitImageFullscreen,
-  setImageFullscreenAvailable,
-  toggleImageFullscreen,
-} from "@/utils/imageFullscreen.js";
+  escapeLeavesPageFullscreen,
+  exitPageFullscreen,
+  setImageShowing,
+  togglePageFullscreen,
+} from "@/utils/pageFullscreen.js";
 import {
   applyTheaterLayout,
   claimTheaterLayout,
@@ -243,7 +243,7 @@ export default {
     showImage: {
       immediate: true,
       handler(showing) {
-        setImageFullscreenAvailable(Boolean(showing));
+        setImageShowing(Boolean(showing));
         if (showing) this.startImageTheater();
         else this.stopImageTheater();
       },
@@ -254,7 +254,7 @@ export default {
   },
   beforeUnmount() {
     window.removeEventListener("keydown", this.keyEvent);
-    setImageFullscreenAvailable(false);
+    setImageShowing(false);
     this.stopImageTheater();
     this.$refs.plyrViewer?.destroyPlyr?.();
     // Clear navigation state when leaving preview
@@ -492,7 +492,7 @@ export default {
 
       if (key === "f" && this.showImage && !altKey && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
-        toggleImageFullscreen();
+        togglePageFullscreen();
         return;
       }
 
@@ -511,8 +511,8 @@ export default {
           this.close();
           break;
         case "Escape":
-          if (escapeLeavesImageFullscreen()) {
-            exitImageFullscreen();
+          if (escapeLeavesPageFullscreen()) {
+            exitPageFullscreen();
             break;
           }
           this.close();
