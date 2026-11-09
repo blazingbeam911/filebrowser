@@ -110,6 +110,15 @@ import {
   setImageFullscreenAvailable,
   toggleImageFullscreen,
 } from "@/utils/imageFullscreen.js";
+import {
+  applyTheaterLayout,
+  claimTheaterLayout,
+  readTheaterSetting,
+  releaseTheaterLayout,
+  setTheaterBarHidden,
+  writeTheaterSetting,
+} from "@/utils/theaterMode.js";
+import { CURSOR_HIDDEN_CLASS, CURSOR_HIDDEN_EVENT } from "@/utils/cursorHide.js";
 import { shouldUsePdfPreviewFallback } from "@/utils/pdfPreview.js";
 
 export default {
@@ -121,6 +130,8 @@ export default {
   },
   data() {
     return {
+      imageTheaterOn: false,
+      imageTheaterActive: false,
       listing: null,
       name: "",
       fullSize: true,
@@ -233,6 +244,8 @@ export default {
       immediate: true,
       handler(showing) {
         setImageFullscreenAvailable(Boolean(showing));
+        if (showing) this.startImageTheater();
+        else this.stopImageTheater();
       },
     },
   },
@@ -242,6 +255,7 @@ export default {
   beforeUnmount() {
     window.removeEventListener("keydown", this.keyEvent);
     setImageFullscreenAvailable(false);
+    this.stopImageTheater();
     this.$refs.plyrViewer?.destroyPlyr?.();
     // Clear navigation state when leaving preview
     mutations.clearNavigation();
@@ -482,6 +496,12 @@ export default {
         return;
       }
 
+      if (key === "t" && this.showImage && !altKey && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault();
+        this.toggleImageTheater();
+        return;
+      }
+
       let shortcut = key;
       if (altKey) shortcut = `Alt+${key}`;
 
@@ -504,6 +524,34 @@ export default {
           this.showDeletePrompt();
           break;
       }
+    },
+    startImageTheater() {
+      claimTheaterLayout();
+      this.imageTheaterOn = readTheaterSetting();
+      applyTheaterLayout(this.imageTheaterOn);
+      this.syncImageTheaterBar();
+      if (!this.imageTheaterActive) window.addEventListener(CURSOR_HIDDEN_EVENT, this.syncImageTheaterBar);
+      this.imageTheaterActive = true;
+    },
+    stopImageTheater() {
+      if (!this.imageTheaterActive) return;
+      this.imageTheaterActive = false;
+      window.removeEventListener(CURSOR_HIDDEN_EVENT, this.syncImageTheaterBar);
+      releaseTheaterLayout();
+    },
+    /** Images have no controls to follow, so the top bar hides with the idle cursor. */
+    syncImageTheaterBar() {
+      const cursorHidden = document.documentElement.classList.contains(CURSOR_HIDDEN_CLASS);
+      setTheaterBarHidden(this.imageTheaterOn && cursorHidden);
+    },
+    async toggleImageTheater() {
+      this.imageTheaterOn = !this.imageTheaterOn;
+      writeTheaterSetting(this.imageTheaterOn);
+      applyTheaterLayout(this.imageTheaterOn);
+      this.syncImageTheaterBar();
+      // The image viewer fits itself on window resizes; this changes its space without one.
+      await this.$nextTick();
+      window.dispatchEvent(new Event("resize"));
     },
     async updatePreview() {
       const expectedPath = state.req.path;

@@ -43,6 +43,21 @@ header .action span {
   display: none;
 }
 
+/* Theater mode: a video or image takes the full height and the top bar floats over it */
+html.fb-theater #main {
+  padding-top: 0;
+}
+
+html.fb-theater header.flexbar {
+  z-index: 6;
+  transition: opacity 0.2s ease;
+}
+
+html.fb-theater-bar-hidden header.flexbar {
+  opacity: 0;
+  pointer-events: none;
+}
+
 /* The image viewer in fullscreen has the whole screen to itself */
 html.fb-image-fullscreen header.flexbar,
 html.fb-image-fullscreen #sidebar {

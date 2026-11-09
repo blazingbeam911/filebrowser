@@ -274,9 +274,11 @@ import {
 import { buildStatsRows } from '@/plyr/plyrStats.js';
 import {
   THEATER_BAR_HIDDEN_CLASS,
-  THEATER_CLASS,
+  applyTheaterLayout,
   claimTheaterLayout,
+  readTheaterSetting,
   releaseTheaterLayout,
+  writeTheaterSetting,
 } from '@/utils/theaterMode.js';
 import { holdVideoFrame, releaseVideoFrame, settleVideoFrame } from '@/utils/videoSwitchHold.js';
 import { getPreviewURL, getPreviewURLPublic } from '@/api/resources';
@@ -325,7 +327,6 @@ const AUDIO_SPEED_STORAGE_KEY = 'fbAudioSpeed';
 const OSD_DURATION_MS = 1500;
 const FRAME_STEP_TIMEOUT_MS = 1500;
 const WHEEL_VOLUME_STEP = 0.05;
-const THEATER_STORAGE_KEY = 'fbTheaterMode';
 const THEATER_BAR_LEAVE_MS = 250;
 const VIDEO_SWITCH_SETTLE_MS = 1500;
 const STATS_BRIEF_MS = 5000;
@@ -1518,11 +1519,7 @@ export default {
     setupTheater() {
       if (this.previewType !== 'video') return;
       claimTheaterLayout();
-      try {
-        this.theaterMode = localStorage.getItem(THEATER_STORAGE_KEY) === '1';
-      } catch {
-        /* storage unavailable: start in the normal layout */
-      }
+      this.theaterMode = readTheaterSetting();
       this.theaterHeader = document.querySelector('header.flexbar');
       this.theaterHeader?.addEventListener('mouseleave', this.onTheaterHeaderLeave);
       this.applyTheater();
@@ -1536,17 +1533,11 @@ export default {
     },
     toggleTheater() {
       this.theaterMode = !this.theaterMode;
-      try {
-        localStorage.setItem(THEATER_STORAGE_KEY, this.theaterMode ? '1' : '0');
-      } catch {
-        /* storage unavailable: it just isn't remembered */
-      }
+      writeTheaterSetting(this.theaterMode);
       this.applyTheater();
     },
     applyTheater() {
-      const root = document.documentElement;
-      root.classList.toggle(THEATER_CLASS, this.theaterMode);
-      if (!this.theaterMode) root.classList.remove(THEATER_BAR_HIDDEN_CLASS);
+      applyTheaterLayout(this.theaterMode);
       this.syncTheaterBar();
     },
     /** The top bar follows Plyr's controls, but never disappears from under the mouse. */
@@ -3954,21 +3945,6 @@ export default {
 .media-stats dd {
   margin: 0;
   overflow-wrap: anywhere;
-}
-
-/* Theater mode: the video takes the full height and the top bar floats over it. */
-html.fb-theater #main {
-  padding-top: 0;
-}
-
-html.fb-theater header.flexbar {
-  z-index: 6;
-  transition: opacity 0.2s ease;
-}
-
-html.fb-theater-bar-hidden header.flexbar {
-  opacity: 0;
-  pointer-events: none;
 }
 
 /* --header-height is in em, which would resolve against these elements' own font sizes. */

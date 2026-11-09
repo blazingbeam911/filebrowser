@@ -196,7 +196,7 @@
       "speedReset": "Back to normal speed",
       "frameStep": "Pause and step one frame back or forward (video)",
       "abLoop": "A-B loop: set the start, set the end, then clear",
-      "theater": "Theater mode: full-height video, top bar hides with the controls",
+      "theater": "Theater mode: full-height videos and images, with a top bar that hides",
       "stats": "Show or hide playback stats",
       "statsBrief": "Show playback stats for 5 seconds",
       "wheelVolume": "Change the volume with the mouse over the player",
