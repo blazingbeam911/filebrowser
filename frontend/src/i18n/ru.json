@@ -611,6 +611,7 @@
     "passwordRequiredForGeneration": "Ваш пароль необходим для генерации кода аутентификатора."
   },
   "general": {
+    "fullscreen": "Fullscreen",
     "import": "Импорт",
     "export": "Экспорт",
     "name": "Имя",

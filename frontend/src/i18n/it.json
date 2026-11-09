@@ -50,6 +50,7 @@
     "noCreateOptions": "Non sono disponibili opzioni di creazione"
   },
   "general": {
+    "fullscreen": "Fullscreen",
     "import": "Importa",
     "export": "Esporta",
     "divider": "Divisore{suffix}",

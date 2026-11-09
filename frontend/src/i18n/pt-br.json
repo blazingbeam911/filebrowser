@@ -611,6 +611,7 @@
     "passwordRequiredForGeneration": "Sua senha é necessária para gerar um código de autenticação."
   },
   "general": {
+    "fullscreen": "Fullscreen",
     "import": "Importar",
     "export": "Exportar",
     "name": "Nome",

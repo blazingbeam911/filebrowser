@@ -611,6 +611,7 @@
     "passwordRequiredForGeneration": "Ο κωδικός πρόσβασής σας απαιτείται για τη δημιουργία ενός κωδικού ελέγχου ταυτότητας."
   },
   "general": {
+    "fullscreen": "Fullscreen",
     "import": "Εισαγωγή",
     "export": "Εξαγωγή",
     "name": "Όνομα",

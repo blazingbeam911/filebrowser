@@ -611,6 +611,7 @@
     "passwordRequiredForGeneration": "A hitelesítési kód generálásához a jelszóra van szükség."
   },
   "general": {
+    "fullscreen": "Fullscreen",
     "import": "Importálás",
     "export": "Exportálás",
     "name": "Név",

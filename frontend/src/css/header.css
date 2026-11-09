@@ -42,3 +42,14 @@ header a:hover {
 header .action span {
   display: none;
 }
+
+/* The image viewer in fullscreen has the whole screen to itself */
+html.fb-image-fullscreen header.flexbar,
+html.fb-image-fullscreen #sidebar {
+  display: none;
+}
+
+html.fb-image-fullscreen #main {
+  padding-top: 0;
+  padding-left: 0 !important;
+}

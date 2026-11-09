@@ -50,6 +50,7 @@
     "noCreateOptions": "Няма налични опции за създаване"
   },
   "general": {
+    "fullscreen": "Fullscreen",
     "import": "Импортиране",
     "export": "Експортиране",
     "to": "до{suffix}",

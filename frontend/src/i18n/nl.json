@@ -50,6 +50,7 @@
     "noCreateOptions": "Er zijn geen opties beschikbaar"
   },
   "general": {
+    "fullscreen": "Fullscreen",
     "import": "Importeren",
     "export": "Exporteren",
     "to": "naar{suffix}",

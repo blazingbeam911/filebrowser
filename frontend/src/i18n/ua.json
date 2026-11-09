@@ -718,6 +718,7 @@
     "accountOptions": "Параметри облікового запису"
   },
   "general": {
+    "fullscreen": "Fullscreen",
     "import": "Імпорт",
     "export": "Експорт",
     "name": "Ім'я",

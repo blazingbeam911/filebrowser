@@ -611,6 +611,7 @@
     "passwordRequiredForGeneration": "Parola dvs. este necesară pentru a genera un cod de autentificare."
   },
   "general": {
+    "fullscreen": "Fullscreen",
     "import": "Import",
     "export": "Export",
     "name": "Nume și prenume",

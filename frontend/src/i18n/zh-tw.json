@@ -718,6 +718,7 @@
     "orange": "橘色"
   },
   "general": {
+    "fullscreen": "Fullscreen",
     "import": "匯入",
     "export": "匯出",
     "name": "名稱{suffix}",

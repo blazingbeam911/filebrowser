@@ -611,6 +611,7 @@
     "passwordRequiredForGeneration": "Hasło jest wymagane do wygenerowania kodu uwierzytelniającego."
   },
   "general": {
+    "fullscreen": "Fullscreen",
     "import": "Importuj",
     "export": "Eksportuj",
     "name": "Nazwa",

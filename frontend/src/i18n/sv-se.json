@@ -718,6 +718,7 @@
     "accountOptions": "Kontoalternativ"
   },
   "general": {
+    "fullscreen": "Fullscreen",
     "import": "Importera",
     "export": "Exportera",
     "name": "Namn",

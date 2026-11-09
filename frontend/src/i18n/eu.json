@@ -50,6 +50,7 @@
     "noCreateOptions": "Ez dago sortzeko aukerarik erabilgarri"
   },
   "general": {
+    "fullscreen": "Fullscreen",
     "import": "Inportatu",
     "export": "Esportatu",
     "to": "-{suffix}",

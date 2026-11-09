@@ -611,6 +611,7 @@
     "passwordRequiredForGeneration": "認証コードを生成するにはパスワードが必要です。"
   },
   "general": {
+    "fullscreen": "Fullscreen",
     "import": "インポート",
     "export": "エクスポート",
     "name": "名前",

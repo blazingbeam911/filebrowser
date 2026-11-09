@@ -718,6 +718,7 @@
     "accountOptions": "Opções da conta"
   },
   "general": {
+    "fullscreen": "Fullscreen",
     "import": "Importar",
     "export": "Exportar",
     "name": "Nome",

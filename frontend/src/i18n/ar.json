@@ -611,6 +611,7 @@
     "passwordRequiredForGeneration": "كلمة المرور الخاصة بك مطلوبة لإنشاء رمز المصادقة."
   },
   "general": {
+    "fullscreen": "Fullscreen",
     "import": "استيراد",
     "export": "تصدير",
     "name": "الاسم",

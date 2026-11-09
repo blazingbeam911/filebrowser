@@ -718,6 +718,7 @@
     "accountOptions": "Accountinstellingen"
   },
   "general": {
+    "fullscreen": "Fullscreen",
     "import": "Importeren",
     "export": "Exporteren",
     "name": "Naam",

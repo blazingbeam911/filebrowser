@@ -50,6 +50,7 @@
     "noCreateOptions": "No create options are available"
   },
   "general": {
+    "fullscreen": "Fullscreen",
     "import": "Import",
     "export": "Export",
     "to": "to{suffix}",
@@ -388,7 +389,7 @@
       "playbackQueue": "Open playback queue or the panel in audio files",
       "switchTabs": "Switch tabs in the panel in audio files",
       "playbackModes": "Toggle between playback modes (excluding loop and single)",
-      "fullscreen": "Toggle fullscreen mode in videos",
+      "fullscreen": "Toggle fullscreen mode in videos and images",
       "captions": "Toggle captions on/off"
     }
   },

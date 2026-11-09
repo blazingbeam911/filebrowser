@@ -718,6 +718,7 @@
     "accountOptions": "账户选项"
   },
   "general": {
+    "fullscreen": "Fullscreen",
     "import": "导入",
     "export": "导出",
     "name": "名称",

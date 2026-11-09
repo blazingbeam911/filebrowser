@@ -611,6 +611,7 @@
     "passwordRequiredForGeneration": "יש להזין את הסיסמה שלך כדי ליצור קוד אימות."
   },
   "general": {
+    "fullscreen": "Fullscreen",
     "import": "ייבוא",
     "export": "ייצוא",
     "name": "שם",

@@ -611,6 +611,7 @@
     "passwordRequiredForGeneration": "Kimlik doğrulayıcı kodu oluşturmak için parolanız gereklidir."
   },
   "general": {
+    "fullscreen": "Fullscreen",
     "import": "İçe Aktar",
     "export": "Dışa Aktar",
     "name": "İsim{suffix}",

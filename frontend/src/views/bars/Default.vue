@@ -20,6 +20,13 @@
     </div>
     <title v-if="!showSearch" class="topTitle">{{ getTopTitle }}</title>
     <action
+      v-if="imageFullscreenAvailable"
+      class="menu-button image-fullscreen-button"
+      icon="fullscreen"
+      :label="$t('general.fullscreen')"
+      @action="toggleImageFullscreen"
+    />
+    <action
       v-if="showHeaderSwitchView && !disableNavButtons"
       class="menu-button"
       :icon="viewIcon"
@@ -44,6 +51,7 @@ import { getters, state, mutations } from "@/store";
 import Action from "@/components/Action.vue";
 import { globalVars } from "@/utils/constants";
 import { url } from "@/utils";
+import { imageFullscreen, toggleImageFullscreen } from "@/utils/imageFullscreen.js";
 
 export default {
   name: "UnifiedHeader",
@@ -56,6 +64,9 @@ export default {
     };
   },
   computed: {
+    imageFullscreenAvailable() {
+      return imageFullscreen.available;
+    },
     getTopTitle() {
       if (getters.isSettings()) {
         return this.$t("general.settings");
@@ -151,6 +162,7 @@ export default {
     },
   },
   methods: {
+    toggleImageFullscreen,
     openSearch() {
       if (!state.isSearchActive) {
         mutations.closeHovers();
@@ -291,6 +303,12 @@ header {
   background-color: var(--panel-bg);
   backdrop-filter: var(--panel-blur);
   color: var(--textPrimary);
+}
+
+/* Beside the overflow button, without pushing the centered title aside */
+.image-fullscreen-button {
+  position: absolute;
+  right: calc(0.5em + var(--safe-area-right) + 3em);
 }
 
 :deep(.action.nav-toggle-button .line),

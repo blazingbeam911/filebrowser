@@ -104,6 +104,12 @@ import {
   pendingInlineResumeFor,
 } from "@/plyr/pipSession.js";
 import { isPdfFile } from "@/utils/mediaFile";
+import {
+  escapeLeavesImageFullscreen,
+  exitImageFullscreen,
+  setImageFullscreenAvailable,
+  toggleImageFullscreen,
+} from "@/utils/imageFullscreen.js";
 import { shouldUsePdfPreviewFallback } from "@/utils/pdfPreview.js";
 
 export default {
@@ -223,12 +229,19 @@ export default {
         await this.loadPreviewForReq();
       },
     },
+    showImage: {
+      immediate: true,
+      handler(showing) {
+        setImageFullscreenAvailable(Boolean(showing));
+      },
+    },
   },
   mounted() {
     window.addEventListener("keydown", this.keyEvent);
   },
   beforeUnmount() {
     window.removeEventListener("keydown", this.keyEvent);
+    setImageFullscreenAvailable(false);
     this.$refs.plyrViewer?.destroyPlyr?.();
     // Clear navigation state when leaving preview
     mutations.clearNavigation();
@@ -463,6 +476,12 @@ export default {
 
       const { key, altKey } = event;
 
+      if (key === "f" && this.showImage && !altKey && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault();
+        toggleImageFullscreen();
+        return;
+      }
+
       let shortcut = key;
       if (altKey) shortcut = `Alt+${key}`;
 
@@ -472,6 +491,12 @@ export default {
           this.close();
           break;
         case "Escape":
+          if (escapeLeavesImageFullscreen()) {
+            exitImageFullscreen();
+            break;
+          }
+          this.close();
+          break;
         case "Backspace":
           this.close();
           break;
