@@ -47,7 +47,7 @@
       </template>
       <template v-else>
         <div class="tjp-line" data-test="summary">
-          <span class="tjp-state" :class="{ 'tjp-failed': job.state === 'failed' }">{{ $t(`thumbnailJobs.state.${job.state}`) }}</span>
+          <span class="tjp-state" :class="{ 'tjp-failed': job.state === 'failed' }">{{ stateLabel(job) }}</span>
           <span v-if="job.startedAt">{{ $t("thumbnailJobs.summary", job) }}</span>
         </div>
         <div v-if="job.error" class="tjp-line tjp-failed">{{ $t("thumbnailJobs.jobError", { error: job.error }) }}</div>
@@ -57,6 +57,7 @@
 </template>
 
 <script>
+import { thumbnailJobStateLabel } from "@/utils/thumbnailJobState.js";
 import * as thumbnailJobsApi from "@/api/thumbnailJobs.js";
 import { getters, mutations, state } from "@/store";
 import { notify } from "@/notify";
@@ -106,6 +107,9 @@ export default {
     if (this.pollTimer) clearInterval(this.pollTimer);
   },
   methods: {
+    stateLabel(job) {
+      return thumbnailJobStateLabel(this.$t, job.state);
+    },
     isActive,
     percent,
     dismiss,

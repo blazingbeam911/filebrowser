@@ -60,6 +60,7 @@
 </template>
 
 <script>
+import { thumbnailJobStateLabel } from "@/utils/thumbnailJobState.js";
 import * as thumbnailJobsApi from "@/api/thumbnailJobs.js";
 import { notify } from "@/notify";
 import {
@@ -101,7 +102,7 @@ export default {
       return formatDuration(seconds, this.$t);
     },
     stateLabel(job) {
-      return this.$t(`thumbnailJobs.state.${job.state}`);
+      return thumbnailJobStateLabel(this.$t, job.state);
     },
     async load() {
       this.loading = true;
