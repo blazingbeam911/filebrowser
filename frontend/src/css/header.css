@@ -68,3 +68,12 @@ html.fb-page-fullscreen #main {
   padding-top: 0;
   padding-left: 0 !important;
 }
+
+/* The previous/next buttons sit lower to center below the header; with the media at full height
+   (fullscreen, theater mode) they center on the screen */
+html.fb-page-fullscreen .nav-button.nav-previous,
+html.fb-page-fullscreen .nav-button.nav-next,
+html.fb-theater .nav-button.nav-previous,
+html.fb-theater .nav-button.nav-next {
+  margin-top: 0;
+}

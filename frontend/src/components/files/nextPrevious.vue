@@ -27,9 +27,9 @@
     @touchstart="handleTouchStart($event, 'previous')"
     @touchmove="handleButtonTouchMove"
     @touchend.prevent="handleTouchEnd"
-    @mouseover="setHoverNav(true)"
-    @mouseleave="setHoverNav(false)"
-    @focus="setHoverNav(true)"
+    @pointerenter="onButtonPointer($event, true)"
+    @pointerleave="onButtonPointer($event, false)"
+    @focus="onButtonFocus"
     @blur="setHoverNav(false)"
     class="nav-button nav-previous"
     :class="{
@@ -60,9 +60,9 @@
     @touchstart="handleTouchStart($event, 'next')"
     @touchmove="handleButtonTouchMove"
     @touchend.prevent="handleTouchEnd"
-    @mouseover="setHoverNav(true)"
-    @mouseleave="setHoverNav(false)"
-    @focus="setHoverNav(true)"
+    @pointerenter="onButtonPointer($event, true)"
+    @pointerleave="onButtonPointer($event, false)"
+    @focus="onButtonFocus"
     @blur="setHoverNav(false)"
     class="nav-button nav-next"
     :class="{ dragging: dragState.type === 'next', active: (dragState.atFullExtent && dragState.type === 'next') || (gestureHint === 'next' && gestureHintCommitReady), 'media-mode': isMediaQueueMode, 'nav-button--hidden': !showNav }"
@@ -167,6 +167,9 @@ export default {
     };
   },
   computed: {
+    currentPath() {
+      return state.req?.path;
+    },
     sameCategoryOnly() {
       return navigationConfig.sameCategory;
     },
@@ -304,6 +307,10 @@ export default {
       if (this.enabled && state.req) {
         await this.setupNavigationForCurrentItem();
       }
+    },
+    currentPath() {
+      // A gesture hint belongs to the file it started on.
+      if (state.navigation.gestureHint) mutations.setNavigationGestureHint({});
     },
     'state.req': {
       async handler() {
@@ -749,6 +756,17 @@ export default {
       this.hoverNav = value;
       mutations.setNavigationHover(value);
     },
+    // A tap enters the button but never leaves it, which would keep the buttons shown; only a
+    // pointer that can hover (mouse, pen) and keyboard focus keep them up.
+    onButtonPointer(event, inside) {
+      if (event.pointerType === 'touch') return;
+      this.setHoverNav(inside);
+      // The hide timer may have run out while the pointer was over the button.
+      if (!inside && state.navigation.show) mutations.peekNavigationChrome();
+    },
+    onButtonFocus(event) {
+      if (event.target.matches?.(':focus-visible')) this.setHoverNav(true);
+    },
 
     // Touch handling and swipe detection (similar to ListingItem.vue)
     handleTouchStart(event, buttonType = null) {
@@ -1134,13 +1152,31 @@ export default {
   color: var(--primaryColor);
 }
 
-.nav-button:hover,
 .nav-button.active {
   background: var(--primaryColor);
   transform: translateY(-50%) scale(1.1);
   box-shadow: var(--fab-elevation-hover);
   color: white;
   opacity: 1;
+}
+
+/* Touch screens keep :hover after a tap, so the hover look needs a pointer that hovers */
+@media (hover: hover) {
+  .nav-button:hover {
+    background: var(--primaryColor);
+    transform: translateY(-50%) scale(1.1);
+    box-shadow: var(--fab-elevation-hover);
+    color: white;
+    opacity: 1;
+  }
+
+  .nav-button.nav-close:hover {
+    transform: translateX(-50%) scale(1.1);
+  }
+
+  .nav-button:hover i.material-symbols {
+    transform: scale(1.1);
+  }
 }
 
 /* Disable transitions during sidebar resizing */
@@ -1156,7 +1192,6 @@ export default {
   transform: translateX(-50%);
 }
 
-.nav-button.nav-close:hover,
 .nav-button.nav-close.active {
   transform: translateX(-50%) scale(1.1);
 }
@@ -1202,7 +1237,6 @@ export default {
   transition: transform var(--fab-transition);
 }
 
-.nav-button:hover i.material-symbols,
 .nav-button.active i.material-symbols {
   transform: scale(1.1);
 }
