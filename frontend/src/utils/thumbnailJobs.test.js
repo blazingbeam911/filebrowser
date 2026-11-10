@@ -3,10 +3,14 @@ import {
   applyList,
   applyStatus,
   dismiss,
+  dismissFinished,
   errorText,
   formatDuration,
+  loadMinimized,
+  overallProgress,
   percent,
   progressJobs,
+  saveMinimized,
   sortJobs,
   thumbnailJobs,
 } from "@/utils/thumbnailJobs.js";
@@ -87,5 +91,47 @@ describe("formatting", () => {
   it("server error messages", () => {
     expect(errorText(new Error('{"status":404,"message":"folder /x is not in the index"}'))).toBe("folder /x is not in the index");
     expect(errorText(new Error("plain text"))).toBe("plain text");
+  });
+});
+
+describe("progress box", () => {
+  it("clears every finished job from the box at once, and only those", () => {
+    applyStatus(job("1", "running", { done: 3 }));
+    applyStatus(job("2", "running"));
+    applyStatus(job("3", "running"));
+    applyStatus(job("4", "queued"));
+    applyStatus(job("1", "done", { done: 10, finishedAt: "2026-01-01T00:00:01Z" }));
+    applyStatus(job("2", "cancelled", { finishedAt: "2026-01-01T00:00:02Z" }));
+    applyStatus(job("3", "failed", { finishedAt: "2026-01-01T00:00:03Z" }));
+    dismissFinished();
+    expect(progressJobs().map((j) => j.id)).toEqual(["4"]);
+    expect(Object.keys(thumbnailJobs.byId).sort((a, b) => Number(a) - Number(b))).toEqual(["1", "2", "3", "4"]);
+  });
+
+  it("sums progress across the active jobs whose size is known", () => {
+    const jobs = [
+      job("1", "running", { done: 30, total: 100 }),
+      job("2", "running", { done: 10, total: 100 }),
+      job("3", "queued", { total: 0 }),
+      job("4", "done", { done: 10 }),
+    ];
+    expect(overallProgress(jobs)).toEqual({ active: 3, finished: 1, percent: 20 });
+    expect(overallProgress([job("5", "queued", { total: 0 })])).toEqual({ active: 1, finished: 0, percent: 0 });
+    expect(overallProgress([])).toEqual({ active: 0, finished: 0, percent: 0 });
+  });
+
+  it("remembers the minimized box, and copes without storage", () => {
+    saveMinimized(true);
+    expect(loadMinimized()).toBe(true);
+    saveMinimized(false);
+    expect(loadMinimized()).toBe(false);
+    const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, get() { throw new Error("blocked"); } });
+    try {
+      expect(loadMinimized()).toBe(false);
+      expect(() => saveMinimized(true)).not.toThrow();
+    } finally {
+      Object.defineProperty(globalThis, "localStorage", original);
+    }
   });
 });

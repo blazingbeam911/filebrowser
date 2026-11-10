@@ -101,6 +101,53 @@ export function dismiss(id) {
   thumbnailJobs.dismissed[String(id)] = true;
 }
 
+/** Dismisses every finished job in the progress box (the panel still lists them). */
+export function dismissFinished() {
+  for (const job of progressJobs()) {
+    if (!isActive(job)) dismiss(job.id);
+  }
+}
+
+/**
+ * The one line of a minimized progress box: how many jobs are queued or running, how many
+ * finished ones it holds, and the percentage done across the active jobs whose size is known.
+ */
+export function overallProgress(jobs) {
+  const active = jobs.filter(isActive);
+  let done = 0;
+  let total = 0;
+  for (const job of active) {
+    if (job.total > 0) {
+      done += Math.min(job.done || 0, job.total);
+      total += job.total;
+    }
+  }
+  return {
+    active: active.length,
+    finished: jobs.length - active.length,
+    percent: total ? Math.floor((done * 100) / total) : 0,
+  };
+}
+
+const MINIMIZED_KEY = "fbThumbnailJobsMinimized";
+
+/** Whether the progress box is minimized on this device. */
+export function loadMinimized() {
+  try {
+    return localStorage.getItem(MINIMIZED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function saveMinimized(minimized) {
+  try {
+    localStorage.setItem(MINIMIZED_KEY, minimized ? "1" : "0");
+  } catch {
+    // storage blocked: the box just forgets
+  }
+}
+
 /** Percentage done, 0–100 (100 for a finished job). */
 export function percent(job) {
   if (!job) return 0;
