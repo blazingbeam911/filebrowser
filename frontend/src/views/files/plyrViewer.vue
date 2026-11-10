@@ -1490,7 +1490,7 @@ export default {
     drawAbLoopMarkers() {
       const progress = this.player?.elements?.container?.querySelector('.plyr__progress');
       if (!progress) return;
-      progress.querySelectorAll('.ab-loop-marker').forEach((el) => el.remove());
+      for (const el of progress.querySelectorAll('.ab-loop-marker')) el.remove();
       for (const percent of abLoopMarkers(this.abLoop, this.player.duration)) {
         const marker = document.createElement('span');
         marker.className = 'ab-loop-marker';
