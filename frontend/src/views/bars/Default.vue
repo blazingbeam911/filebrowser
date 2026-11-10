@@ -18,6 +18,14 @@
         readonly
       />
     </div>
+    <!-- Balances the fullscreen button so the title stays centered and ends before the button -->
+    <action
+      v-if="imageFullscreenAvailable"
+      class="menu-button image-fullscreen-balance"
+      icon="fullscreen"
+      aria-hidden="true"
+      tabindex="-1"
+    />
     <title v-if="!showSearch" class="topTitle">{{ getTopTitle }}</title>
     <action
       v-if="imageFullscreenAvailable"
@@ -305,10 +313,9 @@ header {
   color: var(--textPrimary);
 }
 
-/* Beside the overflow button, without pushing the centered title aside */
-.image-fullscreen-button {
-  position: absolute;
-  right: calc(0.5em + var(--safe-area-right) + 3em);
+.image-fullscreen-balance {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 :deep(.action.nav-toggle-button .line),
