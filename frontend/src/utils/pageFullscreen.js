@@ -5,6 +5,11 @@ import { getters, state } from '@/store/index.ts';
  * Fullscreen for images and videos, with the whole page as the fullscreen element. The page outlives
  * the viewers, so moving between files doesn't leave fullscreen, and the previous and next buttons,
  * prompts and notifications, which live outside the viewers, stay visible.
+ *
+ * Screen rotation is left to the browser: no orientation lock. Firefox for Android holds a playing
+ * video in its own orientation while fullscreen; a lock to "any" only takes effect after that turn,
+ * so the screen turned and then turned back, and a lock repeated per file held the first
+ * orientation for the rest of the fullscreen.
  */
 
 const FULLSCREEN_CLASS = 'fb-page-fullscreen';

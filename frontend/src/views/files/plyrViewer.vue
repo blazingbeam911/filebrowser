@@ -3269,27 +3269,13 @@ export default {
         this.skipNextTapTimer = null;
       }, delay);
     },
-    async onFullscreenEnter() {
+    // Screen rotation in fullscreen is left to the browser (see utils/pageFullscreen.js).
+    onFullscreenEnter() {
       this.isFullscreen = true;
       this.resetVideoEdgeGestureImmediate();
-      // Allow free rotation when video enters full screen mode. This works even if the device's orientation is currently locked.
-      try {
-        await screen.orientation.lock('any');
-      } catch (error) {
-        // The NotSupportedError is thrown for non-mobile browsers and there seems to be no way to pre-check if it is supported.
-        // -> Swallow NotSupportedError but let other errors be thrown.
-        if (error.name !== 'NotSupportedError')
-          throw error;
-      }
     },
     onFullscreenExit() {
       this.isFullscreen = false;
-      if (!screen.orientation?.unlock) return;
-      try {
-        screen.orientation.unlock();
-      } catch (error) {
-        if (error.name !== 'NotSupportedError') throw error;
-      }
     },
     handleMediaEnd() {
       // B can be so close to the end that the file ends before a check sees it.

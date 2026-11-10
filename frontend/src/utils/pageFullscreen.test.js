@@ -81,6 +81,19 @@ describe('page fullscreen', () => {
     expect(mediaMayFollow()).toBe(true);
   });
 
+  it('leaves rotation to the browser', async () => {
+    const orientation = { lock: vi.fn(() => Promise.resolve()), unlock: vi.fn() };
+    Object.defineProperty(screen, 'orientation', { configurable: true, value: orientation });
+    setFullscreenElement(root);
+    view.transitioning = true;
+    await nextTick();
+    Object.assign(view, { type: 'video', transitioning: false });
+    await nextTick();
+    setFullscreenElement(null);
+    expect(orientation.lock).not.toHaveBeenCalled();
+    expect(orientation.unlock).not.toHaveBeenCalled();
+  });
+
   it('ignores fullscreen on another element', () => {
     setFullscreenElement(document.createElement('div'));
     expect(pageFullscreen.active).toBe(false);
