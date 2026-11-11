@@ -32,7 +32,8 @@
       </div>
       <div class="thumbnail-jobs-line">
         <span v-if="job.startedAt">{{ $t("thumbnailJobs.progressLine", { done: job.done, total: job.total, percent: percent(job) }) }}</span>
-        <span v-if="job.state === 'running' && job.secondsLeft > 0">{{ $t("thumbnailJobs.timeLeft", { time: formatDuration(job.secondsLeft) }) }}</span>
+        <span v-if="job.state === 'running' && job.paused">{{ $t("thumbnailJobs.pausedForBrowsing") }}</span>
+        <span v-else-if="job.state === 'running' && job.secondsLeft > 0">{{ $t("thumbnailJobs.timeLeft", { time: formatDuration(job.secondsLeft) }) }}</span>
         <span v-if="job.state === 'running' && job.cancelRequested">{{ $t("thumbnailJobs.cancelling") }}</span>
       </div>
       <div v-if="job.startedAt" class="thumbnail-jobs-line">

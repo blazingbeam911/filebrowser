@@ -14,6 +14,8 @@ export const thumbnailJobs = reactive({
   watched: {},
   /** @type {Record<string, boolean>} finished jobs whose summary was dismissed */
   dismissed: {},
+  /** The progress box is minimized into the status bar (remembered per device, set below). */
+  minimized: false,
 });
 
 const ACTIVE = new Set(["queued", "running"]);
@@ -126,6 +128,7 @@ export function overallProgress(jobs) {
     active: active.length,
     finished: jobs.length - active.length,
     percent: total ? Math.floor((done * 100) / total) : 0,
+    paused: active.some((j) => j.state === "running" && j.paused),
   };
 }
 
@@ -146,6 +149,14 @@ export function saveMinimized(minimized) {
   } catch {
     // storage blocked: the box just forgets
   }
+}
+
+thumbnailJobs.minimized = loadMinimized();
+
+/** Minimizes the progress box into the status bar, or expands it again, and remembers it. */
+export function setMinimized(minimized) {
+  thumbnailJobs.minimized = minimized;
+  saveMinimized(minimized);
 }
 
 /** Percentage done, 0–100 (100 for a finished job). */

@@ -11,6 +11,7 @@ import {
   percent,
   progressJobs,
   saveMinimized,
+  setMinimized,
   sortJobs,
   thumbnailJobs,
 } from "@/utils/thumbnailJobs.js";
@@ -115,9 +116,24 @@ describe("progress box", () => {
       job("3", "queued", { total: 0 }),
       job("4", "done", { done: 10 }),
     ];
-    expect(overallProgress(jobs)).toEqual({ active: 3, finished: 1, percent: 20 });
-    expect(overallProgress([job("5", "queued", { total: 0 })])).toEqual({ active: 1, finished: 0, percent: 0 });
-    expect(overallProgress([])).toEqual({ active: 0, finished: 0, percent: 0 });
+    expect(overallProgress(jobs)).toEqual({ active: 3, finished: 1, percent: 20, paused: false });
+    expect(overallProgress([job("5", "queued", { total: 0 })])).toEqual({ active: 1, finished: 0, percent: 0, paused: false });
+    expect(overallProgress([])).toEqual({ active: 0, finished: 0, percent: 0, paused: false });
+  });
+
+  it("reports a running job paused for browsing", () => {
+    expect(overallProgress([job("1", "running", { done: 1, total: 4, paused: true }), job("2", "queued")]).paused).toBe(true);
+    // a finished job's last status may still say paused: it doesn't count
+    expect(overallProgress([job("3", "done", { paused: true })]).paused).toBe(false);
+  });
+
+  it("shares the minimized state and remembers it", () => {
+    setMinimized(true);
+    expect(thumbnailJobs.minimized).toBe(true);
+    expect(loadMinimized()).toBe(true);
+    setMinimized(false);
+    expect(thumbnailJobs.minimized).toBe(false);
+    expect(loadMinimized()).toBe(false);
   });
 
   it("remembers the minimized box, and copes without storage", () => {

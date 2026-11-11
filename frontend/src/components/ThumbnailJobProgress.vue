@@ -4,95 +4,79 @@
        running and queued jobs, and the summary of each one that finished while this page was
        open, until dismissed. State: utils/thumbnailJobs.js. Kept current by "thumbnailJob"
        events when this user has the realtime event stream, otherwise by polling every 2 s
-       while a job is queued or running. It can be minimized to one line (remembered per
-       device), and "Clear finished" dismisses every finished job at once. -->
+       while a job is queued or running. It can be minimized into the status bar
+       (ThumbnailJobStatus.vue; remembered per device): it then shows nothing here, but keeps
+       loading and polling. "Clear finished" dismisses every finished job at once. -->
   <div
-    v-if="jobs.length"
+    v-if="jobs.length && !minimized"
     id="thumbnail-job-progress"
     class="floating-window"
-    :class="{ 'tjp-minimized': minimized }"
     data-test="thumbnail-progress"
     :style="placement"
   >
-    <template v-if="minimized">
+    <div class="tjp-header">
+      <i class="material-symbols">photo_library</i>
+      <span class="tjp-title">{{ $t("thumbnailJobs.panelTitle") }}</span>
+      <button
+        v-if="overall.finished"
+        type="button"
+        class="tjp-link"
+        data-test="clear-finished"
+        @click="clearFinished"
+      >{{ $t("thumbnailJobs.clearFinished") }}</button>
+      <button type="button" class="tjp-link" data-test="details" @click="openPanel">{{ $t("thumbnailJobs.details") }}</button>
       <button
         type="button"
-        class="tjp-pill"
-        data-test="expand"
-        :aria-label="$t('thumbnailJobs.expand')"
-        :title="$t('thumbnailJobs.expand')"
-        @click="setMinimized(false)"
-      >
-        <i class="material-symbols">photo_library</i>
-        <span class="tjp-pill-text" data-test="pill-text">{{ pillText }}</span>
-        <i class="material-symbols tjp-expand-icon">expand_more</i>
-      </button>
-      <div v-if="overall.active" class="tjp-bar tjp-pill-bar"><div :style="{ width: `${overall.percent}%` }"></div></div>
-    </template>
-    <template v-else>
-      <div class="tjp-header">
-        <i class="material-symbols">photo_library</i>
-        <span class="tjp-title">{{ $t("thumbnailJobs.panelTitle") }}</span>
+        class="tjp-icon"
+        data-test="minimize"
+        :aria-label="$t('thumbnailJobs.minimize')"
+        :title="$t('thumbnailJobs.minimize')"
+        @click="setMinimized(true)"
+      ><i class="material-symbols">expand_more</i></button>
+    </div>
+    <div v-for="job in jobs" :key="job.id" class="tjp-job" :data-job="job.id" :data-state="job.state">
+      <div class="tjp-row">
+        <span class="tjp-path" :title="`${job.source}: ${job.path}`">{{ job.path }}</span>
         <button
-          v-if="overall.finished"
-          type="button"
-          class="tjp-link"
-          data-test="clear-finished"
-          @click="clearFinished"
-        >{{ $t("thumbnailJobs.clearFinished") }}</button>
-        <button type="button" class="tjp-link" data-test="details" @click="openPanel">{{ $t("thumbnailJobs.details") }}</button>
-        <button
+          v-if="isActive(job) && !job.cancelRequested"
           type="button"
           class="tjp-icon"
-          data-test="minimize"
-          :aria-label="$t('thumbnailJobs.minimize')"
-          :title="$t('thumbnailJobs.minimize')"
-          @click="setMinimized(true)"
-        ><i class="material-symbols">expand_more</i></button>
+          data-test="cancel"
+          :aria-label="$t('thumbnailJobs.cancel')"
+          :title="$t('thumbnailJobs.cancel')"
+          @click="cancel(job)"
+        ><i class="material-symbols">cancel</i></button>
+        <button
+          v-if="!isActive(job)"
+          type="button"
+          class="tjp-icon"
+          data-test="dismiss"
+          :aria-label="$t('thumbnailJobs.dismiss')"
+          :title="$t('thumbnailJobs.dismiss')"
+          @click="dismiss(job.id)"
+        ><i class="material-symbols">close</i></button>
       </div>
-      <div v-for="job in jobs" :key="job.id" class="tjp-job" :data-job="job.id" :data-state="job.state">
-        <div class="tjp-row">
-          <span class="tjp-path" :title="`${job.source}: ${job.path}`">{{ job.path }}</span>
-          <button
-            v-if="isActive(job) && !job.cancelRequested"
-            type="button"
-            class="tjp-icon"
-            data-test="cancel"
-            :aria-label="$t('thumbnailJobs.cancel')"
-            :title="$t('thumbnailJobs.cancel')"
-            @click="cancel(job)"
-          ><i class="material-symbols">cancel</i></button>
-          <button
-            v-if="!isActive(job)"
-            type="button"
-            class="tjp-icon"
-            data-test="dismiss"
-            :aria-label="$t('thumbnailJobs.dismiss')"
-            :title="$t('thumbnailJobs.dismiss')"
-            @click="dismiss(job.id)"
-          ><i class="material-symbols">close</i></button>
+      <template v-if="job.state === 'queued'">
+        <div class="tjp-line">{{ $t("thumbnailJobs.state.queued") }}</div>
+      </template>
+      <template v-else-if="job.state === 'running'">
+        <div class="tjp-bar"><div :style="{ width: `${percent(job)}%` }"></div></div>
+        <div class="tjp-line" data-test="progress-line">
+          <span>{{ $t("thumbnailJobs.progressLine", { done: job.done, total: job.total, percent: percent(job) }) }}</span>
+          <span v-if="job.cancelRequested">{{ $t("thumbnailJobs.cancelling") }}</span>
+          <span v-else-if="job.paused" data-test="paused">{{ $t("thumbnailJobs.pausedForBrowsing") }}</span>
+          <span v-else-if="job.secondsLeft > 0">{{ $t("thumbnailJobs.timeLeft", { time: formatDuration(job.secondsLeft) }) }}</span>
+          <span v-if="job.failed > 0" class="tjp-failed">{{ $t("thumbnailJobs.failedCount", { count: job.failed }) }}</span>
         </div>
-        <template v-if="job.state === 'queued'">
-          <div class="tjp-line">{{ $t("thumbnailJobs.state.queued") }}</div>
-        </template>
-        <template v-else-if="job.state === 'running'">
-          <div class="tjp-bar"><div :style="{ width: `${percent(job)}%` }"></div></div>
-          <div class="tjp-line" data-test="progress-line">
-            <span>{{ $t("thumbnailJobs.progressLine", { done: job.done, total: job.total, percent: percent(job) }) }}</span>
-            <span v-if="job.cancelRequested">{{ $t("thumbnailJobs.cancelling") }}</span>
-            <span v-else-if="job.secondsLeft > 0">{{ $t("thumbnailJobs.timeLeft", { time: formatDuration(job.secondsLeft) }) }}</span>
-            <span v-if="job.failed > 0" class="tjp-failed">{{ $t("thumbnailJobs.failedCount", { count: job.failed }) }}</span>
-          </div>
-        </template>
-        <template v-else>
-          <div class="tjp-line" data-test="summary">
-            <span class="tjp-state" :class="{ 'tjp-failed': job.state === 'failed' }">{{ stateLabel(job) }}</span>
-            <span v-if="job.startedAt">{{ $t("thumbnailJobs.summary", job) }}</span>
-          </div>
-          <div v-if="job.error" class="tjp-line tjp-failed">{{ $t("thumbnailJobs.jobError", { error: job.error }) }}</div>
-        </template>
-      </div>
-    </template>
+      </template>
+      <template v-else>
+        <div class="tjp-line" data-test="summary">
+          <span class="tjp-state" :class="{ 'tjp-failed': job.state === 'failed' }">{{ stateLabel(job) }}</span>
+          <span v-if="job.startedAt">{{ $t("thumbnailJobs.summary", job) }}</span>
+        </div>
+        <div v-if="job.error" class="tjp-line tjp-failed">{{ $t("thumbnailJobs.jobError", { error: job.error }) }}</div>
+      </template>
+    </div>
   </div>
 </template>
 
@@ -102,8 +86,8 @@ import * as thumbnailJobsApi from "@/api/thumbnailJobs.js";
 import { getters, mutations, state } from "@/store";
 import { notify } from "@/notify";
 import {
-  applyStatus, dismiss, dismissFinished, errorText, formatDuration, isActive, loadMinimized, overallProgress,
-  percent, progressJobs, refreshThumbnailJobs, saveMinimized,
+  applyStatus, dismiss, dismissFinished, errorText, formatDuration, isActive, overallProgress,
+  percent, progressJobs, refreshThumbnailJobs, setMinimized, thumbnailJobs,
 } from "@/utils/thumbnailJobs.js";
 
 const POLL_MS = 2000;
@@ -111,7 +95,7 @@ const POLL_MS = 2000;
 export default {
   name: "ThumbnailJobProgress",
   data() {
-    return { pollTimer: null, minimized: loadMinimized() };
+    return { pollTimer: null };
   },
   computed: {
     jobs() {
@@ -120,10 +104,8 @@ export default {
     overall() {
       return overallProgress(this.jobs);
     },
-    pillText() {
-      const { active, finished, percent: done } = this.overall;
-      if (active) return this.$t("thumbnailJobs.minimizedActive", { percent: done, count: active }, active);
-      return this.$t("thumbnailJobs.minimizedFinished", { count: finished }, finished);
+    minimized() {
+      return thumbnailJobs.minimized;
     },
     placement() {
       const pinned = getters.isSidebarVisible() && getters.isStickySidebar();
@@ -165,10 +147,7 @@ export default {
     clearFinished() {
       dismissFinished();
     },
-    setMinimized(minimized) {
-      this.minimized = minimized;
-      saveMinimized(minimized);
-    },
+    setMinimized,
     formatDuration(seconds) {
       return formatDuration(seconds, this.$t);
     },
@@ -198,38 +177,6 @@ export default {
   overflow-y: auto;
   padding: 0.6em 0.8em;
   border-radius: var(--borderRadius);
-}
-
-#thumbnail-job-progress.tjp-minimized {
-  width: auto;
-  padding: 0.4em 0.6em;
-}
-
-.tjp-pill {
-  display: flex;
-  align-items: center;
-  gap: 0.4em;
-  background: none;
-  border: none;
-  padding: 0;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-  font-variant-numeric: tabular-nums;
-}
-
-.tjp-pill .material-symbols {
-  color: var(--primaryColor);
-  font-size: 1.2em;
-}
-
-.tjp-pill .tjp-expand-icon {
-  color: var(--textSecondary);
-  transform: rotate(180deg);
-}
-
-.tjp-pill-bar {
-  margin-bottom: 0;
 }
 
 .tjp-header {

@@ -14,6 +14,7 @@
       </div>
       <!-- Right side: Slider to control the listing size or the font size in editor -->
       <div class="status-controls">
+        <ThumbnailJobStatus /><!-- fufu -->
         <div v-if="showGallerySizeSlider" class="gallery-size-control">
           <span class="size-label">{{ $t("general.size") }}</span>
           <input
@@ -46,9 +47,11 @@
 <script>
 import { getters, mutations, state } from "@/store";
 import { getHumanReadableFilesize } from "@/utils/filesizes";
+import ThumbnailJobStatus from "@/components/ThumbnailJobStatus.vue"; // fufu
 
 export default {
   name: "StatusBar",
+  components: { ThumbnailJobStatus }, // fufu
   data() {
     return {
       gallerySize: state.user?.gallerySize,
