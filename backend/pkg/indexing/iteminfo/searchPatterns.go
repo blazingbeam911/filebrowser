@@ -10,13 +10,18 @@ const (
 	patternUserGlob
 )
 
+// escapeGlobLiteral makes s match itself literally in a SQLite GLOB pattern.
+// GLOB has no escape character (a backslash is an ordinary character), so each
+// special character is wrapped in a one-character class instead: [*], [?], [[].
+// A ] outside a class is already literal.
 func escapeGlobLiteral(s string) string {
 	var b strings.Builder
 	for _, r := range s {
 		switch r {
-		case '*', '?', '[', '\\':
-			b.WriteByte('\\')
+		case '*', '?', '[':
+			b.WriteByte('[')
 			b.WriteRune(r)
+			b.WriteByte(']')
 		default:
 			b.WriteRune(r)
 		}

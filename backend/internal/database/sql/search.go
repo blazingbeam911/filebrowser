@@ -53,9 +53,10 @@ func (db *IndexDB) SearchItems(source string, scope string, largest bool, nameGl
 
 	// Apply scope filter
 	if scope != "" {
-		// Use GLOB for prefix matching which is supported by SQLite and efficient
-		query += " AND path GLOB ?"
-		args = append(args, scope+"*")
+		// A range on the (source, path) key rather than GLOB: GLOB would read characters
+		// such as [ ] * ? in the folder's own name as wildcards.
+		query += " AND path >= ? AND path < ?"
+		args = append(args, scope, getNextPathPrefix(scope))
 	}
 
 	if !largest && len(nameGlobPatterns) > 0 {
@@ -104,8 +105,9 @@ func (db *IndexDB) SearchItemsMultiSource(sources []string, sourceScopes map[str
 		scope, hasScope := sourceScopes[source]
 		if hasScope && scope != "" {
 			// Source has a scope - filter by it
-			scopeConditions = append(scopeConditions, "(source = ? AND path GLOB ?)")
-			args = append(args, source, scope+"*")
+			// Range on the (source, path) key, see SearchItems.
+			scopeConditions = append(scopeConditions, "(source = ? AND path >= ? AND path < ?)")
+			args = append(args, source, scope, getNextPathPrefix(scope))
 		} else {
 			// Source has no scope or empty scope - include all paths for this source
 			// The source IN clause already filters by source, so we just need to ensure

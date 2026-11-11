@@ -16,7 +16,10 @@ func TestBuildNameGlobPattern(t *testing.T) {
 		{"new*folder", false, true, false, "new*folder"},
 		{"Blade Runner", false, false, false, "*blade*runner*"},
 		{"Blade Runner", false, false, true, "*Blade*Runner*"},
-		{"test[1]", false, false, false, "*test\\[1]*"},
+		{"test[1]", false, false, false, "*test[[]1]*"},
+		{"a*b?c", true, false, false, "*a[*]b[?]c*"},
+		{`back\slash`, false, false, false, `*back\slash*`},
+		{"Show [S01]", false, false, true, "*Show*[[]S01]*"},
 	}
 
 	for _, tt := range tests {

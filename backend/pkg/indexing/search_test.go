@@ -610,6 +610,96 @@ func TestSearchUserGlob(t *testing.T) {
 	}
 }
 
+// Folder and file names may contain characters that are wildcards in a SQLite GLOB
+// pattern ([ ] * ?). Searching inside such a folder, or for such a name, must treat
+// them as plain text.
+func TestSearchSpecialCharactersInNames(t *testing.T) {
+	if indexDB == nil {
+		var err error
+		indexDB, _, err = dbsql.NewIndexDB("test_search_special", "OFF", 1000, 32, false)
+		if err != nil {
+			t.Fatalf("Failed to create test database: %v", err)
+		}
+	}
+
+	const source = "test_search_special"
+	index := Index{
+		Source: settings.Source{Name: source, Path: "/mock/path"},
+		db:     indexDB,
+		mock:   true,
+	}
+
+	now := time.Now()
+	files := map[string][]string{
+		"/Movies [2020]/": {"a.mkv", "Show [S01] E01.mkv", "Show S E02.mkv"},
+		"/Movies 2/":      {"b.mkv"}, // [2020] read as a GLOB class would match this folder
+		"/Movies 0/":      {"c.mkv"}, // ... and this one
+		"/odd*name?/":     {"d.mkv"},
+		"/oddXXnameY/":    {"e.mkv"},      // matched by odd*name? read as a GLOB pattern
+		"/back\\slash/":   {"f a*b?.mkv"}, // a backslash is an ordinary character
+		"/backslash/":     {"g.mkv"},
+	}
+	for dir, names := range files {
+		info := &iteminfo.FileInfo{Path: dir, ItemInfo: iteminfo.ItemInfo{Name: strings.Trim(dir, "/"), Type: "directory", ModTime: now}}
+		_ = index.db.InsertItem(source, dir, info)
+		for _, name := range names {
+			p := dir + name
+			_ = index.db.InsertItem(source, p, &iteminfo.FileInfo{Path: p, ItemInfo: iteminfo.ItemInfo{Name: name, Type: "video", ModTime: now}})
+		}
+	}
+
+	paths := func(results []*SearchResult) []string {
+		out := []string{}
+		for _, r := range results {
+			out = append(out, r.Path)
+		}
+		return out
+	}
+
+	tests := []struct {
+		name, search, scope string
+		want                []string
+	}{
+		{"in folder with brackets", "mkv", "/Movies [2020]/",
+			[]string{"/Movies [2020]/a.mkv", "/Movies [2020]/Show [S01] E01.mkv", "/Movies [2020]/Show S E02.mkv"}},
+		{"in folder with * and ?", "mkv", "/odd*name?/", []string{"/odd*name?/d.mkv"}},
+		{"in folder with backslash", "mkv", "/back\\slash/", []string{"/back\\slash/f a*b?.mkv"}},
+		{"name with brackets", "Show [S01]", "/", []string{"/Movies [2020]/Show [S01] E01.mkv"}},
+		{"quoted name with brackets", `"[s01] e01"`, "/", []string{"/Movies [2020]/Show [S01] E01.mkv"}},
+		{"name with * and ?", `"a*b?"`, "/", []string{"/back\\slash/f a*b?.mkv"}},
+		{"root scope still finds everything", "mkv", "/", []string{
+			"/Movies [2020]/a.mkv", "/Movies [2020]/Show [S01] E01.mkv", "/Movies [2020]/Show S E02.mkv",
+			"/Movies 2/b.mkv", "/Movies 0/c.mkv", "/odd*name?/d.mkv", "/oddXXnameY/e.mkv",
+			"/back\\slash/f a*b?.mkv", "/backslash/g.mkv"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := paths(index.Search(tt.search, tt.scope, "", false, DefaultSearchResults, 0, 0, false))
+			assert.ElementsMatch(t, tt.want, got)
+		})
+	}
+
+	t.Run("multi-source query in folder with brackets", func(t *testing.T) {
+		rows, err := indexDB.SearchItemsMultiSource([]string{source}, map[string]string{source: "/Movies [2020]/"}, false, nil, false, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		got := []string{}
+		for rows.Next() {
+			var src, path, name, typ string
+			var size, created, mod int64
+			var isDir, hasPreview bool
+			if err := rows.Scan(&src, &path, &name, &size, &created, &mod, &typ, &isDir, &hasPreview); err != nil {
+				t.Fatal(err)
+			}
+			got = append(got, path)
+		}
+		assert.ElementsMatch(t, []string{"/Movies [2020]/", "/Movies [2020]/a.mkv",
+			"/Movies [2020]/Show [S01] E01.mkv", "/Movies [2020]/Show S E02.mkv"}, got)
+	})
+}
+
 func TestSearchLargestModeExcludesRoot(t *testing.T) {
 	// Initialize the database if not already done
 	if indexDB == nil {
