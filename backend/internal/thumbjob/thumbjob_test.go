@@ -7,17 +7,30 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// fakeBackend serves files[prefix] as sorted paths; process decides each file's outcome.
+// fakeBackend serves files[prefix] as sorted paths; check and process decide each file's
+// outcome (no check = every file goes to Process); busy is what Busy reports.
 type fakeBackend struct {
 	mu      sync.Mutex
 	files   map[string][]string
+	check   func(path string) (Outcome, bool)
 	process func(ctx context.Context, spec Spec, path string) (Outcome, error)
 	seen    []string // "jobpath:file" in processing order
+	busy    atomic.Bool
 }
+
+func (b *fakeBackend) Check(_ context.Context, _ Spec, path string) (Outcome, bool) {
+	if b.check != nil {
+		return b.check(path)
+	}
+	return Failed, false
+}
+
+func (b *fakeBackend) Busy() bool { return b.busy.Load() }
 
 func (b *fakeBackend) Count(spec Spec) (int, error) {
 	if spec.Prefix == "/broken/" {
@@ -152,9 +165,16 @@ func TestJobsRunInQueueOrder(t *testing.T) {
 	}
 	close(release)
 	waitFor(t, m, c.ID, StateDone)
-	want := "/a/:/a/f0000.png,/a/:/a/f0001.png,/b/:/b/f0000.png,/b/:/b/f0001.png,/c/:/c/f0000.png"
-	if got := strings.Join(b.processed(), ","); got != want {
-		t.Fatalf("order %s", got)
+	// Within a job, files run in parallel; jobs don't overlap.
+	var jobsInOrder []string
+	for _, p := range b.processed() {
+		job := p[:strings.Index(p, ":")]
+		if len(jobsInOrder) == 0 || jobsInOrder[len(jobsInOrder)-1] != job {
+			jobsInOrder = append(jobsInOrder, job)
+		}
+	}
+	if got := strings.Join(jobsInOrder, ","); got != "/a/,/b/,/c/" || len(b.processed()) != 5 {
+		t.Fatalf("job order %s, processed %v", got, b.processed())
 	}
 	if list := m.List(); list[0].ID != c.ID { // finished: newest first
 		t.Fatalf("finished order %v", list)
@@ -164,6 +184,7 @@ func TestJobsRunInQueueOrder(t *testing.T) {
 // Cancelling the running job lets the current file finish and processes no more; cancelling a
 // queued one removes it before it starts.
 func TestCancel(t *testing.T) {
+	defer setWorkers(1, 1)()
 	started := make(chan struct{})
 	release := make(chan struct{})
 	b := &fakeBackend{files: map[string][]string{"/a/": filesUnder("/a/", 5), "/b/": filesUnder("/b/", 5)}}
@@ -203,6 +224,12 @@ func TestCancel(t *testing.T) {
 	}
 }
 
+func setWorkers(check, generate int) (restore func()) {
+	oldC, oldG := CheckWorkers, GenerateWorkers
+	CheckWorkers, GenerateWorkers = check, generate
+	return func() { CheckWorkers, GenerateWorkers = oldC, oldG }
+}
+
 // A file that runs past the timeout, and one that panics, count as failures and the job goes on.
 func TestTimeoutAndPanicAreFailures(t *testing.T) {
 	old := FileTimeout
@@ -224,7 +251,11 @@ func TestTimeoutAndPanicAreFailures(t *testing.T) {
 	if st.Failed != 2 || st.Generated != 1 {
 		t.Fatalf("counts %+v", st)
 	}
-	if !strings.Contains(st.Failures[0].Reason, "timed out") || !strings.Contains(st.Failures[1].Reason, "panic: decoder bug") {
+	reasons := map[string]string{} // files run in parallel, so failures come in any order
+	for _, f := range st.Failures {
+		reasons[f.Path] = f.Reason
+	}
+	if !strings.Contains(reasons["/a/f0000.png"], "timed out") || !strings.Contains(reasons["/a/f0001.png"], "panic: decoder bug") {
 		t.Fatalf("reasons %+v", st.Failures)
 	}
 }
@@ -243,6 +274,7 @@ func TestListingErrorFailsJob(t *testing.T) {
 
 // The rate measured by a job is kept for estimating the next one.
 func TestRateIsKept(t *testing.T) {
+	defer setWorkers(1, 1)() // one at a time, so wall time per file = the 5 ms each takes
 	b := &fakeBackend{files: map[string][]string{"/a/": filesUnder("/a/", 3)}}
 	b.process = func(context.Context, Spec, string) (Outcome, error) {
 		time.Sleep(5 * time.Millisecond)
@@ -255,5 +287,161 @@ func TestRateIsKept(t *testing.T) {
 	waitFor(t, m, m.Add(Spec{Prefix: "/a/"}).ID, StateDone)
 	if r := m.SecondsPerGenerated(); r < 0.004 || r > 1 {
 		t.Fatalf("rate %v s per file", r)
+	}
+}
+
+// Files the quick check decides never reach Process; at most GenerateWorkers files are in
+// Process at once, while the checks run in parallel.
+func TestCheckAndGenerateLimits(t *testing.T) {
+	defer setWorkers(8, 2)()
+	var inProcess, maxInProcess, inCheck, maxInCheck atomic.Int64
+	bump := func(cur, peak *atomic.Int64) {
+		n := cur.Add(1)
+		for {
+			p := peak.Load()
+			if n <= p || peak.CompareAndSwap(p, n) {
+				break
+			}
+		}
+	}
+	b := &fakeBackend{files: map[string][]string{"/a/": filesUnder("/a/", 200)}}
+	b.check = func(path string) (Outcome, bool) {
+		bump(&inCheck, &maxInCheck)
+		time.Sleep(2 * time.Millisecond)
+		inCheck.Add(-1)
+		if strings.HasSuffix(path, "0.png") || strings.HasSuffix(path, "5.png") {
+			return Generated + 99, false // undecided: the outcome is ignored
+		}
+		return Cached, true
+	}
+	b.process = func(context.Context, Spec, string) (Outcome, error) {
+		bump(&inProcess, &maxInProcess)
+		time.Sleep(3 * time.Millisecond)
+		inProcess.Add(-1)
+		return Generated, nil
+	}
+	m := New(b, nil)
+	st := waitFor(t, m, m.Add(Spec{Prefix: "/a/"}).ID, StateDone)
+	if st.Done != 200 || st.Cached != 160 || st.Generated != 40 {
+		t.Fatalf("counts %+v", st)
+	}
+	if got := len(b.processed()); got != 40 {
+		t.Fatalf("Process ran for %d files, want the 40 the check left", got)
+	}
+	if maxInProcess.Load() != 2 {
+		t.Fatalf("at most %d files in Process at once, want 2", maxInProcess.Load())
+	}
+	if maxInCheck.Load() < 3 {
+		t.Fatalf("checks didn't run in parallel (at most %d at once)", maxInCheck.Load())
+	}
+}
+
+// A panic in the quick check sends the file on to Process.
+func TestCheckPanicFallsBackToProcess(t *testing.T) {
+	b := &fakeBackend{files: map[string][]string{"/a/": filesUnder("/a/", 3)}}
+	b.check = func(string) (Outcome, bool) { panic("stat bug") }
+	m := New(b, nil)
+	st := waitFor(t, m, m.Add(Spec{Prefix: "/a/"}).ID, StateDone)
+	if st.Generated != 3 || len(b.processed()) != 3 {
+		t.Fatalf("counts %+v", st)
+	}
+}
+
+// While the backend is busy the job starts no file and shows as paused; it goes on when the
+// backend is no longer busy. Paused time is reported and kept out of the rate.
+func TestPausesWhileBusy(t *testing.T) {
+	oldPoll := busyPoll
+	busyPoll = 2 * time.Millisecond
+	defer func() { busyPoll = oldPoll }()
+	b := &fakeBackend{files: map[string][]string{"/a/": filesUnder("/a/", 20)}}
+	b.busy.Store(true)
+	var mu sync.Mutex
+	var events []Status
+	m := New(b, func(_ string, st Status) {
+		mu.Lock()
+		events = append(events, st)
+		mu.Unlock()
+	})
+	id := m.Add(Spec{Prefix: "/a/", User: "admin"}).ID
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		st, _ := m.Get(id)
+		if st.Paused {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("job never paused: %+v", st)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if st, _ := m.Get(id); st.Done != 0 || len(b.processed()) != 0 {
+		t.Fatalf("files ran while busy: %+v", st)
+	}
+	b.busy.Store(false)
+	st := waitFor(t, m, id, StateDone)
+	if st.Generated != 20 || st.Paused || st.PausedSeconds < 0.04 {
+		t.Fatalf("after the pause %+v", st)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	sawPaused, sawResumed := false, false
+	for _, e := range events {
+		if e.Paused {
+			sawPaused = true
+		} else if sawPaused && e.State == StateRunning {
+			sawResumed = true
+		}
+	}
+	if !sawPaused || !sawResumed {
+		t.Fatalf("events: paused %v, resumed %v", sawPaused, sawResumed)
+	}
+}
+
+// Cancelling a paused job ends it without processing anything more.
+func TestCancelWhilePaused(t *testing.T) {
+	oldPoll := busyPoll
+	busyPoll = 2 * time.Millisecond
+	defer func() { busyPoll = oldPoll }()
+	b := &fakeBackend{files: map[string][]string{"/a/": filesUnder("/a/", 20)}}
+	b.busy.Store(true)
+	m := New(b, nil)
+	id := m.Add(Spec{Prefix: "/a/"}).ID
+	waitFor(t, m, id, StateRunning)
+	time.Sleep(20 * time.Millisecond)
+	m.Cancel(id)
+	st := waitFor(t, m, id, StateCancelled)
+	if st.Done != 0 || len(b.processed()) != 0 || st.Paused {
+		t.Fatalf("cancelled paused job %+v", st)
+	}
+}
+
+// The per-file timeout starts after a pause: a file that waits longer than FileTimeout for
+// browsing to end doesn't time out.
+func TestTimeoutExcludesPause(t *testing.T) {
+	defer setWorkers(1, 1)()
+	oldPoll, oldTimeout := busyPoll, FileTimeout
+	busyPoll, FileTimeout = 2*time.Millisecond, 40*time.Millisecond
+	defer func() { busyPoll, FileTimeout = oldPoll, oldTimeout }()
+	b := &fakeBackend{files: map[string][]string{"/a/": filesUnder("/a/", 2)}}
+	b.check = func(path string) (Outcome, bool) {
+		if path == "/a/f0001.png" {
+			b.busy.Store(true) // browsing starts between the check and Process
+			go func() { time.Sleep(100 * time.Millisecond); b.busy.Store(false) }()
+		}
+		return Failed, false
+	}
+	b.process = func(ctx context.Context, _ Spec, _ string) (Outcome, error) {
+		select {
+		case <-ctx.Done():
+			return Failed, ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+			return Generated, nil
+		}
+	}
+	m := New(b, nil)
+	st := waitFor(t, m, m.Add(Spec{Prefix: "/a/"}).ID, StateDone)
+	if st.Generated != 2 || st.Failed != 0 || st.PausedSeconds < 0.05 {
+		t.Fatalf("counts %+v", st)
 	}
 }

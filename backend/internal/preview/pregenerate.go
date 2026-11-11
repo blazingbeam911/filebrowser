@@ -44,6 +44,37 @@ func cacheHashFor(file iteminfo.ExtendedFileInfo) string {
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
+// statSizer is a cache that can tell an entry's size without reading it (diskcache.FileCache).
+type statSizer interface {
+	StatSize(key string) (int64, bool, error)
+}
+
+// CachedFromStat reports whether every given size (at seek 0) is already in the cache for the
+// file at realPath with this size and modification time, the key GetPreviewForFile computes for
+// a file without album art. It only stats the cache entries; an entry under minPreviewSize
+// (the empty marker of a failed attempt) counts as not cached, so the file goes the full way.
+func CachedFromStat(realPath string, size int64, modTime time.Time, sizes []string) bool {
+	if service == nil {
+		return false
+	}
+	sc, ok := service.fileCache.(statSizer)
+	if !ok {
+		return false
+	}
+	var file iteminfo.ExtendedFileInfo
+	file.RealPath = realPath
+	file.Size = size
+	file.ModTime = modTime
+	hash := cacheHashFor(file)
+	for _, s := range sizes {
+		n, found, err := sc.StatSize(CacheKey(hash, s, 0))
+		if err != nil || !found || n < minPreviewSize {
+			return false
+		}
+	}
+	return true
+}
+
 // Pregenerate makes sure the thumbnails of file in the given sizes (at seek 0) are in the
 // cache. An earlier failed attempt for this version of the file (the empty marker the preview
 // path stores) is reported as ErrPreviewTooSmall without trying again, as browsing would.

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -100,7 +101,52 @@ func (thumbJobBackend) Page(spec thumbjob.Spec, after string, limit int) ([]stri
 	return db.PreviewableFilesAfter(spec.Source, spec.Prefix, after, limit)
 }
 
+// Busy: someone is browsing and a preview is being made for them (preview/priority.go).
+func (thumbJobBackend) Busy() bool {
+	return preview.BrowsingBusy()
+}
+
+// Check is the quick look at a file that may already be done: one stat of the file and one of
+// each cache entry, no xattrs, no image header, no reading cache entries. It decides only
+//   - a plain regular file (not a symlink, whose key uses the link's target) whose small and
+//     large thumbnails are all in the cache under the key browsing computes, and
+//   - an image browsing sends as it is because it is under 256 KB (or resizing is off).
+//
+// Everything else (missing sizes, the empty marker, audio with album art, symlinks, images
+// that might already fit the bounds) goes to Process, which does the full lookup.
+func (thumbJobBackend) Check(_ context.Context, spec thumbjob.Spec, indexPath string) (thumbjob.Outcome, bool) {
+	idx := indexing.GetIndex(spec.Source)
+	if idx == nil {
+		return thumbjob.Failed, false
+	}
+	realPath := utils.JoinUnderSourceRoot(idx.Path, indexPath)
+	fi, err := os.Lstat(realPath)
+	if err != nil || !fi.Mode().IsRegular() {
+		return thumbjob.Failed, false
+	}
+	size := idx.DisplaySize(fi)
+	ext := strings.ToLower(filepath.Ext(fi.Name()))
+	if quickServedAsOriginal(ext, size) {
+		return thumbjob.Cached, true
+	}
+	if preview.CachedFromStat(realPath, size, fi.ModTime(), thumbJobSizes) {
+		return thumbjob.Cached, true
+	}
+	return thumbjob.Failed, false
+}
+
+// quickServedAsOriginal is shouldServeOriginalPreview without the dimension read: true only
+// when that rule says so from the extension and size alone.
+func quickServedAsOriginal(ext string, size int64) bool {
+	const maxSizeForOriginal = 256 * 1024
+	if !(settings.Config.Server.DisableResize || size < maxSizeForOriginal) {
+		return false
+	}
+	return shouldServeOriginalPreview(ext, iteminfo.ResizableImageTypes[ext], "", "small", size)
+}
+
 func (thumbJobBackend) Process(ctx context.Context, spec thumbjob.Spec, indexPath string) (thumbjob.Outcome, error) {
+	ctx = preview.Background(ctx) // the job's own previews don't count as browsing
 	data, ok := spec.Data.(thumbJobData)
 	if !ok || data.user == nil {
 		return thumbjob.Failed, errors.New("job has no user")

@@ -2,9 +2,12 @@
 // every previewable file under a folder, so browsing it later doesn't wait for thumbnails.
 //
 // Jobs run one at a time, in the order they were queued, and live in memory only: a restart
-// loses them, and running one again skips what is already cached. What a job does with each
-// file (listing, stat, generating) is the Backend's; this package keeps the queue, the counts,
-// cancelling, progress events and log lines.
+// loses them, and running one again skips what is already cached. Within a job, CheckWorkers
+// files are looked at in parallel (the Backend's quick Check), and at most GenerateWorkers of
+// them are processed (thumbnails made) at once. While the Backend reports Busy (someone is
+// browsing and needs thumbnails made), the job starts nothing new until it isn't. What a job
+// does with each file (listing, stat, generating) is the Backend's; this package keeps the
+// queue, the workers, the counts, cancelling, pausing, progress events and log lines.
 package thumbjob
 
 import (
@@ -54,7 +57,12 @@ type Backend interface {
 	Count(spec Spec) (int, error)
 	// Page returns up to limit file paths after `after`, in a stable order.
 	Page(spec Spec, after string, limit int) ([]string, error)
+	// Check is a quick look at one file (no decoding): ok = false when it can't tell, and the
+	// file then goes to Process.
+	Check(ctx context.Context, spec Spec, path string) (outcome Outcome, ok bool)
 	Process(ctx context.Context, spec Spec, path string) (Outcome, error)
+	// Busy reports whether jobs should hold off starting files (someone is browsing).
+	Busy() bool
 }
 
 // Failure is one file that failed.
@@ -82,8 +90,13 @@ type Status struct {
 	FinishedAt      *time.Time `json:"finishedAt,omitempty"`
 	// SecondsLeft estimates the time left from the rate so far (running jobs only, 0 = unknown).
 	SecondsLeft float64 `json:"secondsLeft,omitempty"`
-	// SecondsPerGenerated is the average time of the files that needed thumbnails made.
+	// SecondsPerGenerated is the job's time so far (not counting pauses) per file that needed
+	// thumbnails made: an upper bound, since checking the other files is in it too.
 	SecondsPerGenerated float64 `json:"secondsPerGenerated,omitempty"`
+	// Paused is true while the job waits for browsing to finish.
+	Paused bool `json:"paused,omitempty"`
+	// PausedSeconds is the job's time spent paused so far.
+	PausedSeconds float64 `json:"pausedSeconds,omitempty"`
 }
 
 const (
@@ -95,13 +108,25 @@ const (
 	logEveryAtLeast = 5 * time.Minute
 )
 
-// FileTimeout bounds one file, counted from when it starts processing.
+// FileTimeout bounds one file, counted from when it starts processing (after any pause).
 var FileTimeout = 60 * time.Second
+
+var (
+	// CheckWorkers is how many files a job looks at in parallel.
+	CheckWorkers = 8
+	// GenerateWorkers is how many files a job processes (makes thumbnails for) at once.
+	GenerateWorkers = 2
+	// busyPoll is how often a paused job checks whether it can go on.
+	busyPoll = 100 * time.Millisecond
+)
 
 type job struct {
 	st          Status
 	cancel      bool
-	genTime     time.Duration
+	stop        context.CancelFunc // cancels the running job's workers; nil until it runs
+	waiting     int                // workers waiting while the backend is busy
+	pausedSince time.Time          // when waiting went from 0 to 1
+	paused      time.Duration      // finished pauses
 	lastNotify  time.Time
 	lastLog     time.Time
 	lastLogStep int
@@ -198,9 +223,12 @@ func (m *Manager) Cancel(id string) (Status, bool) {
 		logger.Infof("[Thumbnails] job %s cancelled before it started", j.st.ID)
 	case StateRunning:
 		if !j.cancel {
-			logger.Infof("[Thumbnails] job %s: cancel requested, stopping after the current file", j.st.ID)
+			logger.Infof("[Thumbnails] job %s: cancel requested, stopping after the files in progress", j.st.ID)
 		}
 		j.cancel = true
+		if j.stop != nil {
+			j.stop()
+		}
 	}
 	st := m.snapshot(j)
 	m.mu.Unlock()
@@ -245,14 +273,31 @@ func (m *Manager) snapshot(j *job) Status {
 	st := j.st
 	st.CancelRequested = j.cancel && st.State == StateRunning
 	st.Failures = append([]Failure(nil), j.st.Failures...)
-	if st.Generated > 0 {
-		st.SecondsPerGenerated = j.genTime.Seconds() / float64(st.Generated)
-	}
-	if st.State == StateRunning && st.StartedAt != nil && st.Done > 0 && st.Total > st.Done {
-		perFile := time.Since(*st.StartedAt).Seconds() / float64(st.Done)
-		st.SecondsLeft = perFile * float64(st.Total-st.Done)
+	paused := j.pausedTotal(time.Now())
+	st.Paused = j.waiting > 0
+	st.PausedSeconds = paused.Seconds()
+	if st.StartedAt != nil {
+		end := time.Now()
+		if st.FinishedAt != nil {
+			end = *st.FinishedAt
+		}
+		working := (end.Sub(*st.StartedAt) - paused).Seconds()
+		if st.Generated > 0 && working > 0 {
+			st.SecondsPerGenerated = working / float64(st.Generated)
+		}
+		if st.State == StateRunning && st.Done > 0 && st.Total > st.Done && working > 0 {
+			st.SecondsLeft = working / float64(st.Done) * float64(st.Total-st.Done)
+		}
 	}
 	return st
+}
+
+// pausedTotal is the job's paused time up to now, including a pause in progress. Caller holds m.mu.
+func (j *job) pausedTotal(now time.Time) time.Duration {
+	if j.waiting > 0 {
+		return j.paused + now.Sub(j.pausedSince)
+	}
+	return j.paused
 }
 
 // send passes a status to notify, without the failure list (the panel fetches that), so
@@ -283,7 +328,8 @@ func (m *Manager) work() {
 	}
 }
 
-// run works through one job's files.
+// run works through one job's files: this goroutine reads the file list a page at a time and
+// hands the files to CheckWorkers workers.
 func (m *Manager) run(j *job) {
 	spec := j.st.Spec
 	id := j.st.ID
@@ -304,8 +350,8 @@ func (m *Manager) run(j *job) {
 		if errMsg != "" {
 			logger.Errorf("[Thumbnails] job %s failed after %v: %s", id, dur, errMsg)
 		} else {
-			logger.Infof("[Thumbnails] job %s %s in %v: %d of %d files, %d generated, %d already cached, %d skipped, %d failed",
-				id, state, dur, st.Done, st.Total, st.Generated, st.Cached, st.Skipped, st.Failed)
+			logger.Infof("[Thumbnails] job %s %s in %v: %d of %d files, %d generated, %d already cached, %d skipped, %d failed%s",
+				id, state, dur, st.Done, st.Total, st.Generated, st.Cached, st.Skipped, st.Failed, pausedText(st))
 		}
 		m.send(st)
 	}
@@ -315,37 +361,121 @@ func (m *Manager) run(j *job) {
 		finish(StateFailed, fmt.Sprintf("listing files: %v", err))
 		return
 	}
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
 	m.mu.Lock()
 	j.st.Total = total
 	j.lastLog = time.Now()
+	j.stop = stop
+	if j.cancel { // cancelled between leaving the queue and here
+		stop()
+	}
 	st := m.snapshot(j)
 	m.mu.Unlock()
 	logger.Infof("[Thumbnails] job %s started: source %q, path %q, %d previewable files", id, spec.Source, spec.Path, total)
 	m.send(st)
 
+	paths := make(chan string)
+	tokens := make(chan struct{}, max(GenerateWorkers, 1))
+	var wg sync.WaitGroup
+	for range max(CheckWorkers, 1) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for p := range paths {
+				m.processOne(ctx, j, p, tokens)
+			}
+		}()
+	}
+
+	listErr := m.feed(ctx, spec, paths)
+	close(paths)
+	wg.Wait()
+	switch {
+	case listErr != nil:
+		finish(StateFailed, fmt.Sprintf("listing files: %v", listErr))
+	case m.cancelled(j):
+		finish(StateCancelled, "")
+	default:
+		finish(StateDone, "")
+	}
+}
+
+// feed sends the job's files on paths until the list ends or ctx is cancelled.
+func (m *Manager) feed(ctx context.Context, spec Spec, paths chan<- string) error {
 	after := spec.Prefix
 	for {
-		if m.cancelled(j) {
-			finish(StateCancelled, "")
-			return
+		if ctx.Err() != nil {
+			return nil
 		}
-		paths, err := m.backend.Page(spec, after, pageSize)
+		page, err := m.backend.Page(spec, after, pageSize)
 		if err != nil {
-			finish(StateFailed, fmt.Sprintf("listing files: %v", err))
-			return
+			return err
 		}
-		if len(paths) == 0 {
-			finish(StateDone, "")
-			return
+		if len(page) == 0 {
+			return nil
 		}
-		for _, p := range paths {
-			if m.cancelled(j) {
-				finish(StateCancelled, "")
-				return
+		for _, p := range page {
+			select {
+			case paths <- p:
+			case <-ctx.Done():
+				return nil
 			}
-			m.processOne(j, p)
 		}
-		after = paths[len(paths)-1]
+		after = page[len(page)-1]
+	}
+}
+
+func pausedText(st Status) string {
+	if st.PausedSeconds < 1 {
+		return ""
+	}
+	return fmt.Sprintf(", paused %v for browsing", (time.Duration(st.PausedSeconds) * time.Second).Round(time.Second))
+}
+
+// waitIdle returns once the backend isn't busy (at once if it isn't), false if ctx ended first.
+// While any worker waits here the job shows as paused.
+func (m *Manager) waitIdle(ctx context.Context, j *job) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	if !m.backend.Busy() {
+		return true
+	}
+	m.setWaiting(j, +1)
+	defer m.setWaiting(j, -1)
+	t := time.NewTicker(busyPoll)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-t.C:
+			if !m.backend.Busy() {
+				return ctx.Err() == nil
+			}
+		}
+	}
+}
+
+// setWaiting counts a worker into or out of the paused state, sending an event when the job
+// pauses or resumes.
+func (m *Manager) setWaiting(j *job, delta int) {
+	m.mu.Lock()
+	before := j.waiting > 0
+	now := time.Now()
+	if delta > 0 && j.waiting == 0 {
+		j.pausedSince = now
+	}
+	j.waiting += delta
+	if delta < 0 && j.waiting == 0 {
+		j.paused += now.Sub(j.pausedSince)
+	}
+	changed := before != (j.waiting > 0)
+	st := m.snapshot(j)
+	m.mu.Unlock()
+	if changed {
+		m.send(st)
 	}
 }
 
@@ -355,18 +485,35 @@ func (m *Manager) cancelled(j *job) bool {
 	return j.cancel
 }
 
-// processOne runs the backend on one file under its own timeout and records the outcome.
-func (m *Manager) processOne(j *job, path string) {
-	start := time.Now()
-	outcome, err := m.safeProcess(j.st.Spec, path)
-	elapsed := time.Since(start)
+// processOne looks at one file and, when the quick check can't tell, processes it under its
+// own timeout (holding one of the generate tokens); then it records the outcome. A file whose
+// turn comes after the job was cancelled isn't counted.
+func (m *Manager) processOne(ctx context.Context, j *job, path string, tokens chan struct{}) {
+	if !m.waitIdle(ctx, j) {
+		return
+	}
+	spec := j.st.Spec
+	outcome, ok := m.safeCheck(ctx, spec, path)
+	var err error
+	if !ok {
+		select {
+		case tokens <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
+		if !m.waitIdle(ctx, j) {
+			<-tokens
+			return
+		}
+		outcome, err = m.safeProcess(spec, path)
+		<-tokens
+	}
 
 	m.mu.Lock()
 	j.st.Done++
 	switch outcome {
 	case Generated:
 		j.st.Generated++
-		j.genTime += elapsed
 	case Cached:
 		j.st.Cached++
 	case Skipped:
@@ -412,12 +559,22 @@ func (m *Manager) processOne(j *job, path string) {
 		if st.SecondsLeft > 0 {
 			left = (time.Duration(st.SecondsLeft) * time.Second).String()
 		}
-		logger.Infof("[Thumbnails] job %s: %d of %d files (%d%%), %d generated, %d cached, %d skipped, %d failed, about %s left",
-			st.ID, st.Done, st.Total, step, st.Generated, st.Cached, st.Skipped, st.Failed, left)
+		logger.Infof("[Thumbnails] job %s: %d of %d files (%d%%), %d generated, %d cached, %d skipped, %d failed, about %s left%s",
+			st.ID, st.Done, st.Total, step, st.Generated, st.Cached, st.Skipped, st.Failed, left, pausedText(st))
 	}
 	if notify {
 		m.send(st)
 	}
+}
+
+// safeCheck calls the backend's quick check; a panic sends the file on to Process.
+func (m *Manager) safeCheck(ctx context.Context, spec Spec, path string) (outcome Outcome, ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			outcome, ok = Failed, false
+		}
+	}()
+	return m.backend.Check(ctx, spec, path)
 }
 
 // safeProcess calls the backend with the per-file timeout, turning a panic into a failure.

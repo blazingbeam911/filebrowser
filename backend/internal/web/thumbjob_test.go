@@ -271,3 +271,73 @@ func TestThumbJobAPI(t *testing.T) {
 		t.Fatalf("cancel unknown: %d, want 404", rec.Code)
 	}
 }
+
+// The quick check agrees with the full path: it calls a file done exactly when Process (and so
+// browsing) finds both sizes cached, with the size the index reports (disk usage or logical);
+// it leaves everything it can't be sure of to Process.
+func TestThumbJobQuickCheck(t *testing.T) {
+	startThumbJobPreviews(t)
+	root, name, admin, _ := setupThumbJobSource(t)
+	pics := filepath.Join(root, "pics")
+	if err := os.MkdirAll(pics, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(n string, data []byte) {
+		if err := os.WriteFile(filepath.Join(pics, n), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("big.png", noisyPNG(t, 1600, 1000))
+	write("logical.png", noisyPNG(t, 1500, 900))
+	write("half.png", noisyPNG(t, 1400, 1000))
+	write("tiny.png", noisyPNG(t, 100, 80))
+	if err := os.Symlink(filepath.Join(pics, "big.png"), filepath.Join(pics, "link.png")); err != nil {
+		t.Fatal(err)
+	}
+
+	backend := thumbJobBackend{}
+	spec := thumbjob.Spec{Source: name, Path: "/pics", User: "admin", Prefix: "/pics/", Data: thumbJobData{user: admin, scope: ""}}
+	ctx := context.Background()
+	check := func(p string) (thumbjob.Outcome, bool) { return backend.Check(ctx, spec, p) }
+
+	if out, ok := check("/pics/tiny.png"); !ok || out != thumbjob.Cached {
+		t.Fatalf("tiny.png (sent as it is): %v %v, want cached", out, ok)
+	}
+	if _, ok := check("/pics/big.png"); ok {
+		t.Fatal("big.png decided before anything was made")
+	}
+	if out, err := backend.Process(ctx, spec, "/pics/big.png"); err != nil || out != thumbjob.Generated {
+		t.Fatalf("big.png: %v %v", out, err)
+	}
+	if out, ok := check("/pics/big.png"); !ok || out != thumbjob.Cached {
+		t.Fatalf("big.png after the job made it: %v %v, want cached", out, ok)
+	}
+	if _, ok := check("/pics/link.png"); ok {
+		t.Fatal("a symlink was decided by the quick check")
+	}
+	if _, ok := check("/pics/gone.png"); ok {
+		t.Fatal("a missing file was decided by the quick check")
+	}
+
+	// Logical size: the key changes with it, and the quick check follows.
+	idx := indexing.GetIndex(name)
+	prev := idx.Config.UseLogicalSize
+	idx.Config.UseLogicalSize = !prev
+	t.Cleanup(func() { idx.Config.UseLogicalSize = prev })
+	if out, err := backend.Process(ctx, spec, "/pics/logical.png"); err != nil || out != thumbjob.Generated {
+		t.Fatalf("logical.png: %v %v", out, err)
+	}
+	if out, ok := check("/pics/logical.png"); !ok || out != thumbjob.Cached {
+		t.Fatalf("logical.png with UseLogicalSize=%v: %v %v, want cached", !prev, out, ok)
+	}
+	idx.Config.UseLogicalSize = prev
+
+	// Only one size made (browsing the list view): not done.
+	req := httptest.NewRequest(http.MethodGet, "/api/resources/preview?source="+name+"&path=/pics/half.png&size=small", nil)
+	if status, err := previewHandler(httptest.NewRecorder(), req, &Context{User: admin}); err != nil || (status != 0 && status != http.StatusOK) {
+		t.Fatalf("preview small: %d %v", status, err)
+	}
+	if _, ok := check("/pics/half.png"); ok {
+		t.Fatal("half.png decided with only the small size cached")
+	}
+}

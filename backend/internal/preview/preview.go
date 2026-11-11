@@ -414,6 +414,7 @@ func handleJPEGFallback(ctx context.Context, s *Service, file iteminfo.ExtendedF
 }
 
 func GeneratePreviewWithMD5(ctx context.Context, file iteminfo.ExtendedFileInfo, previewSize, officeUrl string, seekPercentage int, fileMD5 string) ([]byte, error) {
+	defer foreground(ctx)() // fufu: lets the thumbnail job give way to browsing (priority.go)
 	// Note: fileMD5 is actually a cache hash (metadata-based), not a true file content MD5
 	// Validate that cache hash is not empty to prevent cache corruption
 	if fileMD5 == "" {
