@@ -71,6 +71,12 @@ func decodePreviewImage(r io.Reader, format Format) (image.Image, error) {
 				if err != nil {
 					return nil, fmt.Errorf("failed to read image: %w", err)
 				}
+				// fufu: the first frame alone, with deepteams/webp (webp_decode.go), so any
+				// length of animation gets a preview. The frame limit below stays as the
+				// fallback if that fails.
+				if img, err := decodeFirstWebPFrame(data, int(md.PixelWidth), int(md.PixelHeight)); err == nil {
+					return img, nil
+				}
 				frames := max(countWebPFrames(data), 1)
 				if pixels*int64(frames) > maxPreviewPixels {
 					return nil, errImageTooLarge(md.PixelWidth, md.PixelHeight, frames)

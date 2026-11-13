@@ -11,9 +11,9 @@ import (
 
 // TestWebPDecoderIsDeepteams pins the WebP decoder: image.Decode (and so imaging.Decode for
 // still WebP) must use deepteams/webp, and the encoder's copy must not register gen2brain's.
-// A lossy WebP decodes to *image.NRGBA with deepteams and to *image.YCbCr with x/image; gen2brain's
-// decoder would accept an animated WebP as a still image, which deepteams' registered decoder does not
-// need to (animated WebP goes through imaging's own animation path).
+// A lossy WebP decodes to *image.NRGBA with deepteams and to *image.YCbCr with x/image. Previews
+// of animated WebP also rely on it: deepteams' registered decoder returns an animated file's
+// first frame (decodeFirstWebPFrame), where x/image can't read the file at all.
 func TestWebPDecoderIsDeepteams(t *testing.T) {
 	if d := activeWebPDecoder(); d != "deepteams/webp" {
 		t.Fatalf("active WebP decoder is %q, want deepteams/webp", d)

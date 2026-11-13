@@ -263,22 +263,9 @@ func resizeDefaults(opts ResizeOptions) ResizeOptions {
 	return opts
 }
 
-// decodeForPreview decodes as resizeWithSize does: imaging first, then the standard decoder.
+// decodeForPreview decodes as resizeWithSize does (decodePreviewImage, image_decode.go).
 func decodeForPreview(r io.ReadSeeker, format Format) (image.Image, error) {
-	img, err := imaging.Decode(r, previewDecodeOpts(true)...)
-	if err == nil {
-		return img, nil
-	}
-	_, _ = r.Seek(0, io.SeekStart)
-	if format == FormatJpeg {
-		img, err = jpeg.Decode(r)
-	} else {
-		img, _, err = image.Decode(r)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode image: %w", err)
-	}
-	return img, nil
+	return decodePreviewImage(r, format)
 }
 
 // encodeDecodedPreview resizes and encodes a decoded image as resizeWithSize does.

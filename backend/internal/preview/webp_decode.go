@@ -8,7 +8,9 @@ package preview
 
 import (
 	"bytes"
+	"encoding/binary"
 	"image"
+	"image/draw"
 
 	_ "github.com/deepteams/webp" // registers the WebP decoder
 	"github.com/gen2brain/webp"
@@ -57,4 +59,43 @@ func logWebPDecoder() {
 	} else {
 		logger.Warningf("WebP decoder: %s (expected deepteams/webp; WebP thumbnails will be slower)", d)
 	}
+}
+
+// decodeFirstWebPFrame decodes only the first frame of an animated WebP and places it on the
+// canvas at its offset, as imaging does with frame 0. imaging.Decode would decode every frame
+// (image_decode.go). deepteams/webp's registered decoder reads the first frame of an animated
+// file; x/image/webp can't read animated files at all.
+func decodeFirstWebPFrame(data []byte, canvasW, canvasH int) (image.Image, error) {
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	x, y := firstWebPFrameOffset(data)
+	b := img.Bounds()
+	if x == 0 && y == 0 && b.Min == (image.Point{}) && b.Dx() == canvasW && b.Dy() == canvasH {
+		return img, nil
+	}
+	canvas := image.NewNRGBA(image.Rect(0, 0, canvasW, canvasH))
+	draw.Draw(canvas, image.Rect(x, y, x+b.Dx(), y+b.Dy()), img, b.Min, draw.Src)
+	return canvas, nil
+}
+
+// firstWebPFrameOffset returns where the first animation frame (ANMF chunk) of a WebP file
+// sits on the canvas: the chunk stores X/2 and Y/2 as 24-bit little-endian numbers.
+func firstWebPFrameOffset(data []byte) (x, y int) {
+	if len(data) < 12 || string(data[0:4]) != "RIFF" || string(data[8:12]) != "WEBP" {
+		return 0, 0
+	}
+	le24 := func(b []byte) int { return int(b[0]) | int(b[1])<<8 | int(b[2])<<16 }
+	for i := 12; i+8 <= len(data); {
+		size := int(binary.LittleEndian.Uint32(data[i+4 : i+8]))
+		if string(data[i:i+4]) == "ANMF" {
+			if i+14 > len(data) {
+				return 0, 0
+			}
+			return 2 * le24(data[i+8:i+11]), 2 * le24(data[i+11:i+14])
+		}
+		i += 8 + size + size&1
+	}
+	return 0, 0
 }
