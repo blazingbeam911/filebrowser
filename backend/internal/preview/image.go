@@ -239,29 +239,11 @@ func (s *Service) resizeWithSize(in io.Reader, out io.Writer, fileSize int64, op
 		}
 	}
 
-	// Decode the image - try imaging library first, fall back to format-specific decoder if it fails
-	img, err := imaging.Decode(wrappedReader, previewDecodeOpts(true)...)
+	// Decode the image (image_decode.go): imaging first, then the format-specific standard
+	// decoder, with limits for very large and animated images.
+	img, err := decodePreviewImage(wrappedReader, opts.Format)
 	if err != nil {
-		// Imaging library failed, try format-specific standard decoder as fallback
-		// Reset reader if possible
-		if seeker, ok := wrappedReader.(io.Seeker); ok {
-			_, _ = seeker.Seek(0, io.SeekStart)
-		}
-
-		// Use format-specific decoder (more reliable than image.Decode auto-detection)
-		if opts.Format == FormatJpeg {
-			img, err = jpeg.Decode(wrappedReader)
-			if err != nil {
-				// Return error with JPEG-specific terms so FFmpeg fallback can catch it
-				return fmt.Errorf("failed to decode image: %w", err)
-			}
-		} else {
-			// For other formats, try auto-detection
-			img, _, err = image.Decode(wrappedReader)
-			if err != nil {
-				return fmt.Errorf("failed to decode image: %w", err)
-			}
-		}
+		return err
 	}
 
 	// Skip resize in Fit mode when the image is already within target dimensions.

@@ -381,6 +381,12 @@ func (s *Service) generateImagePreview(ctx context.Context, file iteminfo.Extend
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
+		// Too many pixels to decode: no preview. Not the FFmpeg fallback either, which
+		// would decode the whole image as well.
+		if errors.Is(err, ErrImageTooLarge) {
+			logger.Warningf("Image too large for preview: %s (%v)", file.Name, err)
+			return nil, err
+		}
 		// For JPEG files, try FFmpeg fallback if initial decode failed
 		if strings.HasPrefix(file.Type, "image/jpeg") {
 			return handleJPEGFallback(ctx, s, file, previewSize, err)
