@@ -40,6 +40,9 @@
     "underAMinute": "under a minute",
     "minutes": "{m} min",
     "hoursMinutes": "{h} h {m} min",
+    "folders": "({count} folder) | ({count} folders)",
+    "by": "by {user}",
+    "preparing": "Refreshing the folders in the index…",
     "state": {
       "queued": "Queued",
       "running": "Running",

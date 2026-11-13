@@ -36,7 +36,7 @@
     </div>
     <div v-for="job in jobs" :key="job.id" class="tjp-job" :data-job="job.id" :data-state="job.state">
       <div class="tjp-row">
-        <span class="tjp-path" :title="`${job.source}: ${job.path}`">{{ job.path }}</span>
+        <span class="tjp-path" :title="jobTitle(job)">{{ job.path }}<span v-if="folderCount(job) > 1" class="tjp-folders" data-test="folders">{{ $t("thumbnailJobs.folders", { count: folderCount(job) }) }}</span></span>
         <button
           v-if="isActive(job) && !job.cancelRequested"
           type="button"
@@ -61,7 +61,8 @@
       </template>
       <template v-else-if="job.state === 'running'">
         <div class="tjp-bar"><div :style="{ width: `${percent(job)}%` }"></div></div>
-        <div class="tjp-line" data-test="progress-line">
+        <div v-if="job.preparing" class="tjp-line" data-test="preparing">{{ $t("thumbnailJobs.preparing") }}</div>
+        <div v-else class="tjp-line" data-test="progress-line">
           <span>{{ $t("thumbnailJobs.progressLine", { done: job.done, total: job.total, percent: percent(job) }) }}</span>
           <span v-if="job.cancelRequested">{{ $t("thumbnailJobs.cancelling") }}</span>
           <span v-else-if="job.paused" data-test="paused">{{ $t("thumbnailJobs.pausedForBrowsing") }}</span>
@@ -86,8 +87,9 @@ import * as thumbnailJobsApi from "@/api/thumbnailJobs.js";
 import { getters, mutations, state } from "@/store";
 import { notify } from "@/notify";
 import {
-  applyStatus, dismiss, dismissFinished, errorText, formatDuration, isActive, overallProgress,
-  percent, progressJobs, refreshThumbnailJobs, setMinimized, thumbnailJobs,
+  applyStatus, canUseThumbnailJobs, dismiss, dismissFinished, errorText, folderCount, formatDuration,
+  isActive, jobTitle, overallProgress, percent, progressJobs, refreshThumbnailJobs, setMinimized,
+  thumbnailJobs,
 } from "@/utils/thumbnailJobs.js";
 
 const POLL_MS = 2000;
@@ -113,7 +115,7 @@ export default {
     },
     /** Poll while a job is active and no event stream brings its updates. */
     needsPolling() {
-      return getters.isAdmin() && !state.realtimeActive && this.jobs.some((j) => isActive(j));
+      return canUseThumbnailJobs() && !state.realtimeActive && this.jobs.some((j) => isActive(j));
     },
   },
   watch: {
@@ -143,6 +145,8 @@ export default {
     },
     isActive,
     percent,
+    folderCount,
+    jobTitle,
     dismiss,
     clearFinished() {
       dismissFinished();
@@ -222,6 +226,11 @@ export default {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tjp-folders {
+  margin-left: 0.4em;
+  color: var(--textSecondary);
 }
 
 .tjp-icon {

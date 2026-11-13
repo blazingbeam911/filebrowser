@@ -261,6 +261,7 @@ import { isRichTextPreviewMimeType, getTypeInfo, getTypeInfoFromExt } from "@/ut
 import { isMediaRequest } from "@/utils/mediaFile";
 import { expandBeforeEnter, expandEnter, expandLeave } from "@/utils/expandTransition";
 import { navigationConfig, setSameCategoryOnly } from "@/utils/navigationConfig.js";
+import { canUseThumbnailJobs } from "@/utils/thumbnailJobs.js"; // fufu
 
 function isArchivePath(pathOrName) {
   if (!pathOrName || typeof pathOrName !== "string") return false;
@@ -599,12 +600,12 @@ export default {
       return getters.isAdmin() && this.showCreate;
     },
     /**
-     * fufu: admins. With nothing selected (right-click on empty space opens the create panel)
-     * the current folder; otherwise the selected folders, a job each.
+     * fufu: admins and users with API access. With nothing selected (right-click on empty space
+     * opens the create panel) the current folder; otherwise the selected folders, a job each.
      */
     showGenerateThumbnails() {
       if (this.showLimitedOptions) return false;
-      if (!getters.isAdmin() || getters.isShare() || this.isSearchActive || this.isAdvancedSearch) return false;
+      if (!canUseThumbnailJobs() || this.isSearchActive || this.isAdvancedSearch) return false;
       if (getters.currentView() !== "listingView") return false;
       if (this.selectedCount === 0) return this.isFolderItem(this.req);
       if (this.showCreate) return false;

@@ -1,7 +1,25 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { state } from "@/store";
+
+// The shared test setup mocks the store without getters; these tests need the three below.
+vi.mock("@/store", () => {
+  const state = { user: { username: "me", permissions: {} } };
+  return {
+    state,
+    getters: {
+      isLoggedIn: () => true,
+      isShare: () => false,
+      isAdmin: () => state.user.permissions?.admin === true,
+    },
+  };
+});
 import {
   applyList,
   applyStatus,
+  canUseThumbnailJobs,
+  folderCount,
+  isOwnJob,
+  jobTitle,
   dismiss,
   dismissFinished,
   errorText,
@@ -19,10 +37,11 @@ import {
 const t = (key, params) => `${key}${params ? JSON.stringify(params) : ""}`;
 
 function job(id, state, extra = {}) {
-  return { id, source: "s", path: `/f${id}`, state, total: 10, done: 0, generated: 0, cached: 0, skipped: 0, failed: 0, queuedAt: `q${id}`, ...extra };
+  return { id, source: "s", path: `/f${id}`, user: "me", state, total: 10, done: 0, generated: 0, cached: 0, skipped: 0, failed: 0, queuedAt: `q${id}`, ...extra };
 }
 
 beforeEach(() => {
+  state.user = { ...state.user, username: "me", permissions: { admin: false, api: true } };
   thumbnailJobs.byId = {};
   thumbnailJobs.watched = {};
   thumbnailJobs.dismissed = {};
@@ -149,5 +168,33 @@ describe("progress box", () => {
     } finally {
       Object.defineProperty(globalThis, "localStorage", original);
     }
+  });
+});
+
+describe("who sees what", () => {
+  it("lets admins and users with API access use jobs, and nobody else", () => {
+    expect(canUseThumbnailJobs()).toBe(true);
+    state.user = { ...state.user, permissions: { admin: true, api: false } };
+    expect(canUseThumbnailJobs()).toBe(true);
+    state.user = { ...state.user, permissions: { admin: false, api: false } };
+    expect(canUseThumbnailJobs()).toBe(false);
+  });
+
+  it("keeps other users' jobs (an admin's list has them) out of the progress box", () => {
+    applyStatus(job("1", "running"));
+    applyStatus(job("2", "queued", { user: "downloader" }));
+    expect(isOwnJob(thumbnailJobs.byId["1"])).toBe(true);
+    expect(isOwnJob(thumbnailJobs.byId["2"])).toBe(false);
+    expect(progressJobs().map((j) => j.id)).toEqual(["1"]);
+    expect(overallProgress(progressJobs()).active).toBe(1);
+  });
+
+  it("describes a job with several folders", () => {
+    const one = job("1", "queued");
+    const many = job("2", "queued", { path: "/site", paths: ["/site/a", "/site/b", "/site/c"] });
+    expect(folderCount(one)).toBe(1);
+    expect(folderCount(many)).toBe(3);
+    expect(jobTitle(one)).toBe("s: /f1");
+    expect(jobTitle(many)).toBe("s: /site/a\ns: /site/b\ns: /site/c");
   });
 });

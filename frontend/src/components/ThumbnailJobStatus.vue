@@ -27,8 +27,7 @@
 </template>
 
 <script>
-import { getters } from "@/store";
-import { overallProgress, progressJobs, setMinimized, thumbnailJobs } from "@/utils/thumbnailJobs.js";
+import { canUseThumbnailJobs, overallProgress, progressJobs, setMinimized, thumbnailJobs } from "@/utils/thumbnailJobs.js";
 
 export default {
   name: "ThumbnailJobStatus",
@@ -40,7 +39,7 @@ export default {
       return overallProgress(this.jobs);
     },
     show() {
-      return getters.isAdmin() && thumbnailJobs.minimized && this.jobs.length > 0;
+      return canUseThumbnailJobs() && thumbnailJobs.minimized && this.jobs.length > 0;
     },
     title() {
       const { active, finished, percent, paused } = this.overall;

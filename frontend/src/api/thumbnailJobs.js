@@ -1,4 +1,4 @@
-// fufu: thumbnail jobs (backend: internal/web/thumbjob.go). Admin only.
+// fufu: thumbnail jobs (backend: internal/web/thumbjob.go). Admins and users with API access.
 import { getApiPath } from "@/utils/url.js";
 import { fetchJSON } from "./utils.ts";
 

@@ -2,9 +2,13 @@ package thumbjob
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +25,7 @@ type fakeBackend struct {
 	process func(ctx context.Context, spec Spec, path string) (Outcome, error)
 	seen    []string // "jobpath:file" in processing order
 	busy    atomic.Bool
+	prepare func(ctx context.Context, spec Spec) error
 }
 
 func (b *fakeBackend) Check(_ context.Context, _ Spec, path string) (Outcome, bool) {
@@ -32,15 +37,30 @@ func (b *fakeBackend) Check(_ context.Context, _ Spec, path string) (Outcome, bo
 
 func (b *fakeBackend) Busy() bool { return b.busy.Load() }
 
-func (b *fakeBackend) Count(spec Spec) (int, error) {
-	if spec.Prefix == "/broken/" {
-		return 0, errors.New("db gone")
+func (b *fakeBackend) Prepare(ctx context.Context, spec Spec) error {
+	if b.prepare != nil {
+		return b.prepare(ctx, spec)
 	}
-	return len(b.files[spec.Prefix]), nil
+	return nil
 }
 
-func (b *fakeBackend) Page(spec Spec, after string, limit int) ([]string, error) {
-	all := append([]string(nil), b.files[spec.Prefix]...)
+func (b *fakeBackend) Count(spec Spec) (int, error) {
+	n := 0
+	for _, prefix := range spec.Prefixes {
+		if prefix == "/broken/" {
+			return 0, errors.New("db gone")
+		}
+		b.mu.Lock()
+		n += len(b.files[prefix])
+		b.mu.Unlock()
+	}
+	return n, nil
+}
+
+func (b *fakeBackend) Page(_ Spec, prefix, after string, limit int) ([]string, error) {
+	b.mu.Lock()
+	all := append([]string(nil), b.files[prefix]...)
+	b.mu.Unlock()
 	sort.Strings(all)
 	var out []string
 	for _, p := range all {
@@ -53,7 +73,7 @@ func (b *fakeBackend) Page(spec Spec, after string, limit int) ([]string, error)
 
 func (b *fakeBackend) Process(ctx context.Context, spec Spec, path string) (Outcome, error) {
 	b.mu.Lock()
-	b.seen = append(b.seen, spec.Prefix+":"+path)
+	b.seen = append(b.seen, spec.Prefixes[0]+":"+path)
 	b.mu.Unlock()
 	if b.process != nil {
 		return b.process(ctx, spec, path)
@@ -116,7 +136,7 @@ func TestJobCountsOutcomesAcrossPages(t *testing.T) {
 		events = append(events, st)
 		mu.Unlock()
 	})
-	st := m.Add(Spec{Source: "s", Path: "/a", User: "admin", Prefix: "/a/"})
+	st := m.Add(Spec{Source: "s", Path: "/a", User: "admin", Prefixes: []string{"/a/"}})
 	if st.State != StateQueued {
 		t.Fatalf("new job state %s", st.State)
 	}
@@ -152,10 +172,10 @@ func TestJobsRunInQueueOrder(t *testing.T) {
 		return Generated, nil
 	}
 	m := New(b, nil)
-	a := m.Add(Spec{Prefix: "/a/"})
+	a := m.Add(Spec{Prefixes: []string{"/a/"}})
 	waitFor(t, m, a.ID, StateRunning)
-	bj := m.Add(Spec{Prefix: "/b/"})
-	c := m.Add(Spec{Prefix: "/c/"})
+	bj := m.Add(Spec{Prefixes: []string{"/b/"}})
+	c := m.Add(Spec{Prefixes: []string{"/c/"}})
 	if st, _ := m.Get(bj.ID); st.State != StateQueued {
 		t.Fatalf("second job is %s while the first runs", st.State)
 	}
@@ -196,8 +216,8 @@ func TestCancel(t *testing.T) {
 		return Generated, nil
 	}
 	m := New(b, nil)
-	a := m.Add(Spec{Prefix: "/a/"})
-	queued := m.Add(Spec{Prefix: "/b/"})
+	a := m.Add(Spec{Prefixes: []string{"/a/"}})
+	queued := m.Add(Spec{Prefixes: []string{"/b/"}})
 	<-started
 	if st, ok := m.Cancel(queued.ID); !ok || st.State != StateCancelled {
 		t.Fatalf("cancel queued: %+v %v", st, ok)
@@ -247,7 +267,7 @@ func TestTimeoutAndPanicAreFailures(t *testing.T) {
 		return Generated, nil
 	}
 	m := New(b, nil)
-	st := waitFor(t, m, m.Add(Spec{Prefix: "/a/"}).ID, StateDone)
+	st := waitFor(t, m, m.Add(Spec{Prefixes: []string{"/a/"}}).ID, StateDone)
 	if st.Failed != 2 || st.Generated != 1 {
 		t.Fatalf("counts %+v", st)
 	}
@@ -264,8 +284,8 @@ func TestTimeoutAndPanicAreFailures(t *testing.T) {
 func TestListingErrorFailsJob(t *testing.T) {
 	b := &fakeBackend{files: map[string][]string{"/a/": filesUnder("/a/", 1)}}
 	m := New(b, nil)
-	bad := m.Add(Spec{Prefix: "/broken/"})
-	good := m.Add(Spec{Prefix: "/a/"})
+	bad := m.Add(Spec{Prefixes: []string{"/broken/"}})
+	good := m.Add(Spec{Prefixes: []string{"/a/"}})
 	if st := waitFor(t, m, bad.ID, StateFailed); !strings.Contains(st.Error, "db gone") {
 		t.Fatalf("error %q", st.Error)
 	}
@@ -284,7 +304,7 @@ func TestRateIsKept(t *testing.T) {
 	if m.SecondsPerGenerated() != 0 {
 		t.Fatal("rate known before any job")
 	}
-	waitFor(t, m, m.Add(Spec{Prefix: "/a/"}).ID, StateDone)
+	waitFor(t, m, m.Add(Spec{Prefixes: []string{"/a/"}}).ID, StateDone)
 	if r := m.SecondsPerGenerated(); r < 0.004 || r > 1 {
 		t.Fatalf("rate %v s per file", r)
 	}
@@ -321,7 +341,7 @@ func TestCheckAndGenerateLimits(t *testing.T) {
 		return Generated, nil
 	}
 	m := New(b, nil)
-	st := waitFor(t, m, m.Add(Spec{Prefix: "/a/"}).ID, StateDone)
+	st := waitFor(t, m, m.Add(Spec{Prefixes: []string{"/a/"}}).ID, StateDone)
 	if st.Done != 200 || st.Cached != 160 || st.Generated != 40 {
 		t.Fatalf("counts %+v", st)
 	}
@@ -341,7 +361,7 @@ func TestCheckPanicFallsBackToProcess(t *testing.T) {
 	b := &fakeBackend{files: map[string][]string{"/a/": filesUnder("/a/", 3)}}
 	b.check = func(string) (Outcome, bool) { panic("stat bug") }
 	m := New(b, nil)
-	st := waitFor(t, m, m.Add(Spec{Prefix: "/a/"}).ID, StateDone)
+	st := waitFor(t, m, m.Add(Spec{Prefixes: []string{"/a/"}}).ID, StateDone)
 	if st.Generated != 3 || len(b.processed()) != 3 {
 		t.Fatalf("counts %+v", st)
 	}
@@ -362,7 +382,7 @@ func TestPausesWhileBusy(t *testing.T) {
 		events = append(events, st)
 		mu.Unlock()
 	})
-	id := m.Add(Spec{Prefix: "/a/", User: "admin"}).ID
+	id := m.Add(Spec{Prefixes: []string{"/a/"}, User: "admin"}).ID
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		st, _ := m.Get(id)
@@ -406,7 +426,7 @@ func TestCancelWhilePaused(t *testing.T) {
 	b := &fakeBackend{files: map[string][]string{"/a/": filesUnder("/a/", 20)}}
 	b.busy.Store(true)
 	m := New(b, nil)
-	id := m.Add(Spec{Prefix: "/a/"}).ID
+	id := m.Add(Spec{Prefixes: []string{"/a/"}}).ID
 	waitFor(t, m, id, StateRunning)
 	time.Sleep(20 * time.Millisecond)
 	m.Cancel(id)
@@ -440,8 +460,269 @@ func TestTimeoutExcludesPause(t *testing.T) {
 		}
 	}
 	m := New(b, nil)
-	st := waitFor(t, m, m.Add(Spec{Prefix: "/a/"}).ID, StateDone)
+	st := waitFor(t, m, m.Add(Spec{Prefixes: []string{"/a/"}}).ID, StateDone)
 	if st.Generated != 2 || st.Failed != 0 || st.PausedSeconds < 0.05 {
 		t.Fatalf("counts %+v", st)
+	}
+}
+
+// blockingBackend returns a backend whose Process waits on release for files under /hold/.
+func blockingBackend(files map[string][]string) (*fakeBackend, chan struct{}) {
+	release := make(chan struct{})
+	b := &fakeBackend{files: files}
+	b.process = func(_ context.Context, _ Spec, path string) (Outcome, error) {
+		if strings.HasPrefix(path, "/hold/") {
+			<-release
+		}
+		return Generated, nil
+	}
+	return b, release
+}
+
+// A job with several folders counts and works through all of them, folder by folder.
+func TestSeveralFoldersInOneJob(t *testing.T) {
+	restore := setWorkers(1, 1)
+	defer restore()
+	b := &fakeBackend{files: map[string][]string{"/a/": filesUnder("/a/", 3), "/b/": filesUnder("/b/", 2)}}
+	m := New(b, nil)
+	st := waitFor(t, m, m.Add(Spec{Path: "/", Paths: []string{"/a", "/b"}, Prefixes: []string{"/a/", "/b/"}}).ID, StateDone)
+	if st.Total != 5 || st.Done != 5 || st.Generated != 5 {
+		t.Fatalf("status %+v, want 5 files done", st)
+	}
+	seen := b.processed()
+	if len(seen) != 5 || !strings.HasSuffix(seen[2], "/a/f0002.png") || !strings.HasSuffix(seen[3], "/b/f0000.png") {
+		t.Fatalf("processed %v, want /a/ then /b/", seen)
+	}
+}
+
+// Prepare runs before the files are counted (so what it adds is in the job), the job shows as
+// preparing meanwhile, and a Prepare error fails the job.
+func TestPrepareRunsFirst(t *testing.T) {
+	b := &fakeBackend{files: map[string][]string{}}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	b.prepare = func(_ context.Context, spec Spec) error {
+		if spec.Prefixes[0] == "/bad/" {
+			return errors.New("folder vanished")
+		}
+		close(entered)
+		<-release
+		b.mu.Lock()
+		b.files["/new/"] = filesUnder("/new/", 4)
+		b.mu.Unlock()
+		return nil
+	}
+	m := New(b, nil)
+	id := m.Add(Spec{Refresh: true, Prefixes: []string{"/new/"}}).ID
+	<-entered
+	if st, _ := m.Get(id); st.State != StateRunning || !st.Preparing {
+		t.Fatalf("while preparing: %+v", st)
+	}
+	close(release)
+	st := waitFor(t, m, id, StateDone)
+	if st.Preparing || st.Total != 4 || st.Generated != 4 {
+		t.Fatalf("after preparing: %+v, want the 4 new files", st)
+	}
+	bad := waitFor(t, m, m.Add(Spec{Refresh: true, Prefixes: []string{"/bad/"}}).ID, StateFailed)
+	if !strings.Contains(bad.Error, "refreshing the index: folder vanished") {
+		t.Fatalf("failed job error %q", bad.Error)
+	}
+}
+
+// A request already covered by a queued job of the same user and source (the same folders, or
+// folders inside them) returns that job; anything else gets its own.
+func TestMergeIntoQueuedJob(t *testing.T) {
+	b, release := blockingBackend(map[string][]string{"/hold/": {"/hold/x.png"}})
+	defer close(release)
+	m := New(b, nil)
+	running := m.Add(Spec{User: "u", Source: "s", Prefixes: []string{"/hold/"}})
+	waitFor(t, m, running.ID, StateRunning)
+
+	q := m.Add(Spec{User: "u", Source: "s", Refresh: true, Prefixes: []string{"/a/", "/b/"}})
+	for _, tc := range []struct {
+		name  string
+		spec  Spec
+		merge bool
+	}{
+		{"same folders", Spec{User: "u", Source: "s", Refresh: true, Prefixes: []string{"/b/", "/a/"}}, true},
+		{"inside, no refresh", Spec{User: "u", Source: "s", Prefixes: []string{"/a/x/"}}, true},
+		{"the running job's folder", Spec{User: "u", Source: "s", Prefixes: []string{"/hold/"}}, false},
+		{"other user", Spec{User: "v", Source: "s", Refresh: true, Prefixes: []string{"/a/"}}, false},
+		{"other source", Spec{User: "u", Source: "t", Refresh: true, Prefixes: []string{"/a/"}}, false},
+		{"one folder not covered", Spec{User: "u", Source: "s", Refresh: true, Prefixes: []string{"/a/", "/c/"}}, false},
+	} {
+		got := m.Add(tc.spec)
+		if (got.ID == q.ID) != tc.merge || got.Merged != tc.merge {
+			t.Errorf("%s: job %s merged=%v, want merged=%v into %s", tc.name, got.ID, got.Merged, tc.merge, q.ID)
+		}
+	}
+	// Refresh asked for, the queued job doesn't refresh: not covered.
+	plain := m.Add(Spec{User: "w", Source: "s", Prefixes: []string{"/p/"}})
+	if got := m.Add(Spec{User: "w", Source: "s", Refresh: true, Prefixes: []string{"/p/"}}); got.ID == plain.ID {
+		t.Error("a refresh request merged into a job that doesn't refresh")
+	}
+}
+
+// Finished jobs are kept per user: one user's many jobs don't push out another's.
+func TestFinishedKeptPerUser(t *testing.T) {
+	m := New(&fakeBackend{files: map[string][]string{}}, nil)
+	var last Status
+	for i := 0; i < maxFinished+5; i++ {
+		last = m.Add(Spec{User: "busy", Prefixes: []string{fmt.Sprintf("/b%d/", i)}})
+		waitFor(t, m, last.ID, StateDone)
+		if i == 2 {
+			waitFor(t, m, m.Add(Spec{User: "quiet", Prefixes: []string{"/q/"}}).ID, StateDone)
+		}
+	}
+	n := map[string]int{}
+	for _, st := range m.List() {
+		n[st.User]++
+	}
+	if n["busy"] != maxFinished || n["quiet"] != 1 {
+		t.Fatalf("finished jobs kept %v, want %d busy and 1 quiet", n, maxFinished)
+	}
+}
+
+// The queue survives a restart: queued and running jobs are saved, queued again in their old
+// order with their ids (ahead of jobs added since), ids go on from where they were, a job the
+// restorer can't rebuild yet is retried, and one it rejects is dropped.
+func TestPersistAcrossRestart(t *testing.T) {
+	prevEvery := restoreEvery
+	restoreEvery = 5 * time.Millisecond
+	defer func() { restoreEvery = prevEvery }()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "thumbjobs.json")
+
+	b1, release := blockingBackend(map[string][]string{"/hold/": {"/hold/x.png"}})
+	m1 := New(b1, nil)
+	m1.Persist(path, nil)
+	t.Cleanup(m1.stopSaving)
+	running := m1.Add(Spec{User: "u", Source: "s", Path: "/hold", Prefixes: []string{"/hold/"}})
+	waitFor(t, m1, running.ID, StateRunning)
+	a := m1.Add(Spec{User: "u", Source: "s", Path: "/", Paths: []string{"/a", "/b"}, Refresh: true, Prefixes: []string{"/a/", "/b/"}})
+	gone := m1.Add(Spec{User: "gone", Source: "s", Path: "/g", Prefixes: []string{"/g/"}})
+	later := m1.Add(Spec{User: "late", Source: "s", Path: "/l", Prefixes: []string{"/l/"}})
+	cancelled := m1.Add(Spec{User: "u", Source: "s", Path: "/c", Prefixes: []string{"/c/"}})
+	m1.Cancel(cancelled.ID)
+
+	// The "restart": the file as it is now, read by a new manager (m1 goes on writing its own).
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("save file mode: %v %v", info.Mode(), err)
+	}
+	close(release)
+	path2 := filepath.Join(dir, "restarted.json")
+	if err := os.WriteFile(path2, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	b2, release2 := blockingBackend(map[string][]string{"/hold/": {"/hold/x.png"}})
+	defer close(release2)
+	m2 := New(b2, nil)
+	t.Cleanup(m2.stopSaving)
+	// A job added before the saved ones are back: it must wait behind them.
+	first := m2.Add(Spec{User: "new", Source: "s", Path: "/hold", Prefixes: []string{"/hold/"}})
+	waitFor(t, m2, first.ID, StateRunning)
+	early := m2.Add(Spec{User: "new", Source: "s", Path: "/e", Prefixes: []string{"/e/"}})
+	var lateTries atomic.Int32
+	m2.Persist(path2, func(spec Spec) (Spec, error) {
+		switch spec.User {
+		case "gone":
+			return Spec{}, errors.New("no such user")
+		case "late":
+			if lateTries.Add(1) < 3 {
+				return Spec{}, ErrNotReady
+			}
+		}
+		var prefixes []string
+		paths := spec.Paths
+		if len(paths) == 0 {
+			paths = []string{spec.Path}
+		}
+		for _, p := range paths {
+			prefixes = append(prefixes, strings.TrimSuffix(p, "/")+"/")
+		}
+		spec.Prefixes = prefixes
+		return spec, nil
+	})
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := m2.Get(later.ID); ok {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	var queued []string
+	for _, st := range m2.List() {
+		if st.State == StateQueued {
+			queued = append(queued, st.ID)
+			if st.ID != early.ID && !st.Restored {
+				t.Errorf("job %s back from the save file without Restored", st.ID)
+			}
+		}
+	}
+	want := []string{running.ID, a.ID, later.ID, early.ID}
+	if fmt.Sprint(queued) != fmt.Sprint(want) {
+		t.Fatalf("queued after the restart %v, want %v (saved ones first, in order; %s dropped, %s cancelled)", queued, want, gone.ID, cancelled.ID)
+	}
+	if st, _ := m2.Get(a.ID); len(st.Prefixes) != 2 || !st.Refresh || len(st.Paths) != 2 {
+		t.Fatalf("restored job %+v lost its folders or refresh", st)
+	}
+	if _, ok := m2.Get(gone.ID); ok {
+		t.Fatal("a job the restorer rejected was queued")
+	}
+	if n, _ := strconv.Atoi(m2.Add(Spec{User: "new", Prefixes: []string{"/n/"}}).ID); n <= mustAtoi(t, cancelled.ID) {
+		t.Fatalf("new job id %d reuses a saved one (last %s)", n, cancelled.ID)
+	}
+	// The new manager's file now holds what it has queued, and not the dropped job.
+	data2, _ := os.ReadFile(path2)
+	var q savedQueue
+	if err := json.Unmarshal(data2, &q); err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]bool{}
+	for _, j := range q.Jobs {
+		ids[j.ID] = true
+	}
+	if !ids[a.ID] || !ids[later.ID] || ids[gone.ID] || ids[cancelled.ID] {
+		t.Fatalf("save file after the restart has %v", ids)
+	}
+}
+
+// stopSaving makes m stop writing its save file (waiting for a save in progress), so a test's
+// temp dir can go while m's worker still runs.
+func (m *Manager) stopSaving() {
+	m.saveMu.Lock()
+	defer m.saveMu.Unlock()
+	m.mu.Lock()
+	m.savePath = ""
+	m.mu.Unlock()
+}
+
+func mustAtoi(t *testing.T, s string) int {
+	t.Helper()
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// A missing or unreadable save file starts an empty queue.
+func TestPersistBadFile(t *testing.T) {
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "bad.json")
+	if err := os.WriteFile(bad, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{bad, filepath.Join(dir, "missing.json")} {
+		m := New(&fakeBackend{files: map[string][]string{}}, nil)
+		m.Persist(p, func(Spec) (Spec, error) { t.Fatal("restorer called"); return Spec{}, nil })
+		if n := len(m.List()); n != 0 {
+			t.Fatalf("%s: %d jobs", p, n)
+		}
 	}
 }

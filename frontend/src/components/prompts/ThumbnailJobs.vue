@@ -15,7 +15,8 @@
     </p>
     <div v-for="job in jobs" :key="job.id" class="thumbnail-jobs-job" :data-job="job.id" :data-state="job.state">
       <div class="thumbnail-jobs-head">
-        <span class="thumbnail-jobs-path" :title="`${job.source}: ${job.path}`">{{ job.path }}</span>
+        <span class="thumbnail-jobs-path" :title="jobTitle(job)">{{ job.path }}<span v-if="folderCount(job) > 1" class="thumbnail-jobs-folders" data-test="folders">{{ $t("thumbnailJobs.folders", { count: folderCount(job) }) }}</span></span>
+        <span v-if="!isOwnJob(job)" class="thumbnail-jobs-owner" data-test="owner">{{ $t("thumbnailJobs.by", { user: job.user }) }}</span>
         <span class="thumbnail-jobs-state" :class="`state-${job.state}`">{{ stateLabel(job) }}</span>
         <button
           v-if="isActive(job) && !job.cancelRequested"
@@ -31,7 +32,8 @@
         <div :style="{ width: `${percent(job)}%` }"></div>
       </div>
       <div class="thumbnail-jobs-line">
-        <span v-if="job.startedAt">{{ $t("thumbnailJobs.progressLine", { done: job.done, total: job.total, percent: percent(job) }) }}</span>
+        <span v-if="job.state === 'running' && job.preparing" data-test="preparing">{{ $t("thumbnailJobs.preparing") }}</span>
+        <span v-else-if="job.startedAt">{{ $t("thumbnailJobs.progressLine", { done: job.done, total: job.total, percent: percent(job) }) }}</span>
         <span v-if="job.state === 'running' && job.paused">{{ $t("thumbnailJobs.pausedForBrowsing") }}</span>
         <span v-else-if="job.state === 'running' && job.secondsLeft > 0">{{ $t("thumbnailJobs.timeLeft", { time: formatDuration(job.secondsLeft) }) }}</span>
         <span v-if="job.state === 'running' && job.cancelRequested">{{ $t("thumbnailJobs.cancelling") }}</span>
@@ -65,7 +67,8 @@ import { thumbnailJobStateLabel } from "@/utils/thumbnailJobState.js";
 import * as thumbnailJobsApi from "@/api/thumbnailJobs.js";
 import { notify } from "@/notify";
 import {
-  allJobs, applyList, applyStatus, errorText, formatDuration, isActive, percent, thumbnailJobs,
+  allJobs, applyList, applyStatus, errorText, folderCount, formatDuration, isActive, isOwnJob, jobTitle,
+  percent, thumbnailJobs,
 } from "@/utils/thumbnailJobs.js";
 
 export default {
@@ -98,7 +101,10 @@ export default {
   },
   methods: {
     isActive,
+    isOwnJob,
     percent,
+    folderCount,
+    jobTitle,
     formatDuration(seconds) {
       return formatDuration(seconds, this.$t);
     },
@@ -167,6 +173,20 @@ export default {
 .thumbnail-jobs-state {
   flex-shrink: 0;
   color: var(--textSecondary);
+}
+
+.thumbnail-jobs-folders,
+.thumbnail-jobs-owner {
+  color: var(--textSecondary);
+  font-weight: normal;
+}
+
+.thumbnail-jobs-folders {
+  margin-left: 0.4em;
+}
+
+.thumbnail-jobs-owner {
+  flex-shrink: 0;
 }
 
 .thumbnail-jobs-state.state-running {

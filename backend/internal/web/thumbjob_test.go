@@ -3,6 +3,8 @@ package web
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -15,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gtsteffaniak/filebrowser/backend/internal/adapters/fs/files"
 	"github.com/gtsteffaniak/filebrowser/backend/internal/adapters/fs/fileutils"
 	"github.com/gtsteffaniak/filebrowser/backend/internal/app"
 	dbsql "github.com/gtsteffaniak/filebrowser/backend/internal/database/sql"
@@ -152,7 +155,7 @@ func TestThumbJobThumbnailsAreCacheHitsForPreviews(t *testing.T) {
 	}
 
 	backend := thumbJobBackend{}
-	spec := thumbjob.Spec{Source: name, Path: "/pics", User: "admin", Prefix: "/pics/", Data: thumbJobData{user: admin, scope: ""}}
+	spec := thumbjob.Spec{Source: name, Path: "/pics", User: "admin", Prefixes: []string{"/pics/"}, Data: thumbJobData{user: admin, scope: ""}}
 	ctx := context.Background()
 	if out, err := backend.Process(ctx, spec, "/pics/big.png"); err != nil || out != thumbjob.Generated {
 		t.Fatalf("big.png: %v, %v; want generated", out, err)
@@ -185,8 +188,9 @@ func TestThumbJobThumbnailsAreCacheHitsForPreviews(t *testing.T) {
 	}
 }
 
-// The API: non-admins are refused on every route; an admin can count, queue (a job per
-// folder), list and cancel; a file or a missing folder is refused before anything is queued.
+// The API: users without API access are refused on every route; an admin can count, queue (a
+// job per folder), list and cancel; a file or a missing folder is refused before anything is
+// queued.
 func TestThumbJobAPI(t *testing.T) {
 	startThumbJobPreviews(t)
 	root, name, admin, regular := setupThumbJobSource(t)
@@ -198,34 +202,8 @@ func TestThumbJobAPI(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a", "x.png"), noisyPNG(t, 10, 10), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	db := indexing.GetIndexDB()
-	for _, row := range []struct {
-		path    string
-		dir     bool
-		preview bool
-	}{{"/a/", true, false}, {"/b/", true, false}, {"/a/x.png", false, true}, {"/a/notes.txt", false, false}} {
-		info := &iteminfo.FileInfo{Path: row.path, IsDir: row.dir, ItemInfo: iteminfo.ItemInfo{Name: filepath.Base(row.path), ModTime: time.Unix(1, 0), Type: "image/png", HasPreview: row.preview}}
-		if row.dir {
-			info.Type = "directory"
-		}
-		if err := db.InsertItem(name, row.path, info); err != nil {
-			t.Fatal(err)
-		}
-	}
-	mux := http.NewServeMux()
-	registerThumbJobRoutes(mux)
-	call := func(u *users.User, method, target, body string) *httptest.ResponseRecorder {
-		t.Helper()
-		var rd io.Reader = http.NoBody
-		if body != "" {
-			rd = bytes.NewBufferString(body)
-		}
-		req := httptest.NewRequest(method, target, rd)
-		req.AddCookie(&http.Cookie{Name: "filebrowser_quantum_jwt", Value: testSessionToken(t, u, time.Hour)})
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
-		return rec
-	}
+	insertThumbJobRows(t, name, []thumbJobRow{{"/a/", true, false}, {"/b/", true, false}, {"/a/x.png", false, true}, {"/a/notes.txt", false, false}})
+	call := thumbJobCaller(t)
 
 	for _, r := range []struct{ method, target, body string }{
 		{"GET", "/thumbnails/jobs", ""},
@@ -234,7 +212,7 @@ func TestThumbJobAPI(t *testing.T) {
 		{"DELETE", "/thumbnails/jobs/1", ""},
 	} {
 		if rec := call(regular, r.method, r.target, r.body); rec.Code != http.StatusForbidden {
-			t.Errorf("non-admin %s %s: %d, want 403", r.method, r.target, rec.Code)
+			t.Errorf("user without API access %s %s: %d, want 403", r.method, r.target, rec.Code)
 		}
 	}
 
@@ -270,6 +248,245 @@ func TestThumbJobAPI(t *testing.T) {
 	if rec := call(admin, "DELETE", "/thumbnails/jobs/999", ""); rec.Code != http.StatusNotFound {
 		t.Fatalf("cancel unknown: %d, want 404", rec.Code)
 	}
+	waitThumbJobsIdle(t)
+}
+
+type thumbJobRow struct {
+	path    string
+	dir     bool
+	preview bool
+}
+
+func insertThumbJobRows(t *testing.T, source string, rows []thumbJobRow) {
+	t.Helper()
+	db := indexing.GetIndexDB()
+	for _, row := range rows {
+		info := &iteminfo.FileInfo{Path: row.path, IsDir: row.dir, ItemInfo: iteminfo.ItemInfo{Name: filepath.Base(row.path), ModTime: time.Unix(1, 0), Type: "image/png", HasPreview: row.preview}}
+		if row.dir {
+			info.Type = "directory"
+		}
+		if err := db.InsertItem(source, row.path, info); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// thumbJobCaller calls the thumbnail-job routes as a user (session cookie).
+func thumbJobCaller(t *testing.T) func(u *users.User, method, target, body string) *httptest.ResponseRecorder {
+	mux := http.NewServeMux()
+	registerThumbJobRoutes(mux)
+	return func(u *users.User, method, target, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		var rd io.Reader = http.NoBody
+		if body != "" {
+			rd = bytes.NewBufferString(body)
+		}
+		req := httptest.NewRequest(method, target, rd)
+		req.AddCookie(&http.Cookie{Name: "filebrowser_quantum_jwt", Value: testSessionToken(t, u, time.Hour)})
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+}
+
+// waitThumbJobsIdle waits until the shared job queue has nothing queued or running, so one
+// test's jobs don't run into the next test's source.
+func waitThumbJobsIdle(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		busy := false
+		for _, st := range thumbJobs().List() {
+			if st.State == thumbjob.StateQueued || st.State == thumbjob.StateRunning {
+				busy = true
+			}
+		}
+		if !busy {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("thumbnail jobs still running")
+}
+
+func waitThumbJob(t *testing.T, id string) thumbjob.Status {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		if st, ok := thumbJobs().Get(id); ok && st.State != thumbjob.StateQueued && st.State != thumbjob.StateRunning {
+			return st
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("job %s didn't finish", id)
+	return thumbjob.Status{}
+}
+
+func setThumbJobUserPerms(t *testing.T, u *users.User, api bool, view bool) {
+	t.Helper()
+	u.Permissions.Api = api
+	if err := state.UpdateUser(u, "", "permissions"); err != nil {
+		t.Fatal(err)
+	}
+	for i := range u.BackendScopes {
+		u.BackendScopes[i].Permissions.View = view
+	}
+	users.SyncBackendSourcePermissionsMap(u)
+	if err := state.UpdateUser(u, "", "backendScopes"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A user with API access (not an admin) can queue jobs, sees and cancels only their own, and
+// needs permission to view files in the source; admins see everyone's.
+func TestThumbJobAPIUsers(t *testing.T) {
+	startThumbJobPreviews(t)
+	root, name, admin, regular := setupThumbJobSource(t)
+	if err := os.MkdirAll(filepath.Join(root, "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	insertThumbJobRows(t, name, []thumbJobRow{{"/a/", true, false}})
+	call := thumbJobCaller(t)
+	setThumbJobUserPerms(t, regular, true, true)
+
+	rec := call(regular, "POST", "/thumbnails/jobs", `{"source":"`+name+`","paths":["/a"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("API user queue: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(regular, "GET", "/thumbnails/jobs/count?source="+name+"&path=/a", ""); rec.Code != http.StatusOK {
+		t.Fatalf("API user count: %d %s", rec.Code, rec.Body)
+	}
+	adminJob := thumbJobs().Add(thumbjob.Spec{Source: name, Path: "/a", User: admin.Username, Prefixes: []string{"/a/"}, Data: thumbJobData{user: admin}})
+	waitThumbJobsIdle(t)
+
+	rec = call(regular, "GET", "/thumbnails/jobs", "")
+	if rec.Code != http.StatusOK || bytes.Contains(rec.Body.Bytes(), []byte(`"user":"admin"`)) || !bytes.Contains(rec.Body.Bytes(), []byte(`"user":"regular"`)) {
+		t.Fatalf("API user list: %d %s, want only their own jobs", rec.Code, rec.Body)
+	}
+	if rec := call(admin, "GET", "/thumbnails/jobs", ""); !bytes.Contains(rec.Body.Bytes(), []byte(`"user":"regular"`)) || !bytes.Contains(rec.Body.Bytes(), []byte(`"user":"admin"`)) {
+		t.Fatalf("admin list: %s, want everyone's jobs", rec.Body)
+	}
+	if rec := call(regular, "DELETE", "/thumbnails/jobs/"+adminJob.ID, ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("API user cancels the admin's job: %d, want 404", rec.Code)
+	}
+
+	setThumbJobUserPerms(t, regular, true, false)
+	if rec := call(regular, "POST", "/thumbnails/jobs", `{"source":"`+name+`","paths":["/a"]}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("queue without View: %d %s, want 403", rec.Code, rec.Body)
+	}
+}
+
+// A refresh job takes folders that exist on disk but not yet in the index (a new folder with
+// new folders in it, and a new file in a known folder): the job brings them into the index and
+// makes their thumbnails. Folders gone from disk are left out; nested ones are one range.
+func TestThumbJobRefreshNewFolders(t *testing.T) {
+	startThumbJobPreviews(t)
+	root, name, admin, _ := setupThumbJobSource(t)
+	indexing.SetTestIndexWithDB(name, root)
+	write := func(rel string) {
+		t.Helper()
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, noisyPNG(t, 700, 500), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("site/old/a.png")
+	if err := files.RefreshIndex(name, "/", true, true); err != nil {
+		t.Fatal(err)
+	}
+	db := indexing.GetIndexDB()
+	if _, err := db.GetItem(name, "/site/old/"); err != nil {
+		t.Fatalf("the starting index lacks /site/old/: %v", err)
+	}
+	// Written after the index saw the tree: a new creator with two new posts, a new file in a
+	// known folder.
+	write("site/newcreator/post1/1.png")
+	write("site/newcreator/post1/2.png")
+	write("site/newcreator/post2/3.png")
+	write("site/old/b.png")
+	if _, err := db.GetItem(name, "/site/newcreator/"); err == nil {
+		t.Fatal("the new folder is in the index before the job")
+	}
+	call := thumbJobCaller(t)
+
+	// Without refresh, a folder not in the index is refused, as before.
+	if rec := call(admin, "POST", "/thumbnails/jobs", `{"source":"`+name+`","paths":["/site/newcreator/post1"]}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("new folder without refresh: %d %s, want 404", rec.Code, rec.Body)
+	}
+	body := `{"source":"` + name + `","refresh":true,"oneJob":true,"paths":["/site/newcreator/post1","/site/newcreator/post2","/site/old","/site/old/sub/../","/site/gone"]}`
+	rec := call(admin, "POST", "/thumbnails/jobs", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refresh job: %d %s", rec.Code, rec.Body)
+	}
+	var resp thumbJobsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Jobs) != 1 || len(resp.Missing) != 1 || resp.Missing[0] != "/site/gone" {
+		t.Fatalf("response %+v, want one job and /site/gone missing", resp)
+	}
+	queued := resp.Jobs[0]
+	if queued.Path != "/site" || len(queued.Paths) != 3 || !queued.Refresh {
+		t.Fatalf("job %+v, want path /site with 3 folders, refresh", queued)
+	}
+	st := waitThumbJob(t, queued.ID)
+	if st.State != thumbjob.StateDone || st.Total != 5 || st.Generated != 5 {
+		t.Fatalf("job %+v, want done with all 5 files made", st)
+	}
+	for _, p := range []string{"/site/newcreator/", "/site/newcreator/post1/", "/site/newcreator/post2/3.png", "/site/old/b.png"} {
+		if _, err := db.GetItem(name, p); err != nil {
+			t.Errorf("%s not in the index after the job: %v", p, err)
+		}
+	}
+
+	// Only missing folders: nothing queued, not an error.
+	rec = call(admin, "POST", "/thumbnails/jobs", `{"source":"`+name+`","refresh":true,"oneJob":true,"paths":["/site/gone"]}`)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"jobs":[]`)) {
+		t.Fatalf("only missing folders: %d %s", rec.Code, rec.Body)
+	}
+	// A file, with refresh: refused.
+	if rec := call(admin, "POST", "/thumbnails/jobs", `{"source":"`+name+`","refresh":true,"paths":["/site/old/a.png"]}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("a file with refresh: %d, want 400", rec.Code)
+	}
+}
+
+// A saved job comes back as the user who queued it, with the same checks as a new request.
+func TestThumbJobRestore(t *testing.T) {
+	startThumbJobPreviews(t)
+	root, name, _, regular := setupThumbJobSource(t)
+	for _, dir := range []string{"x/one", "x/two"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	saved := thumbjob.Spec{Source: name, Path: "/x", Paths: []string{"/x/one", "/x/two"}, User: regular.Username, Refresh: true}
+	if _, err := restoreThumbJob(saved); err == nil {
+		t.Fatal("restored for a user without API access")
+	}
+	setThumbJobUserPerms(t, regular, true, true)
+	spec, err := restoreThumbJob(saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, ok := spec.Data.(thumbJobData)
+	if !ok || data.user == nil || data.user.Username != regular.Username || len(spec.Prefixes) != 2 || spec.Prefixes[0] != "/x/one/" {
+		t.Fatalf("restored %+v", spec)
+	}
+	if _, err := restoreThumbJob(thumbjob.Spec{Source: name, Path: "/x", User: "nobody", Refresh: true}); err == nil || errors.Is(err, thumbjob.ErrNotReady) {
+		t.Fatalf("unknown user: %v", err)
+	}
+	if _, err := restoreThumbJob(thumbjob.Spec{Source: "nosource", Path: "/x", User: regular.Username}); !errors.Is(err, thumbjob.ErrNotReady) {
+		t.Fatalf("unknown source: %v, want not ready", err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, "x")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restoreThumbJob(saved); err == nil || errors.Is(err, thumbjob.ErrNotReady) {
+		t.Fatalf("folders gone: %v", err)
+	}
 }
 
 // The quick check agrees with the full path: it calls a file done exactly when Process (and so
@@ -296,7 +513,7 @@ func TestThumbJobQuickCheck(t *testing.T) {
 	}
 
 	backend := thumbJobBackend{}
-	spec := thumbjob.Spec{Source: name, Path: "/pics", User: "admin", Prefix: "/pics/", Data: thumbJobData{user: admin, scope: ""}}
+	spec := thumbjob.Spec{Source: name, Path: "/pics", User: "admin", Prefixes: []string{"/pics/"}, Data: thumbJobData{user: admin, scope: ""}}
 	ctx := context.Background()
 	check := func(p string) (thumbjob.Outcome, bool) { return backend.Check(ctx, spec, p) }
 

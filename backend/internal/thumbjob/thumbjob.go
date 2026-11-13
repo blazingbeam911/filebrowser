@@ -1,8 +1,11 @@
 // Package thumbjob is a fork-only queue of background jobs that fill the thumbnail cache for
 // every previewable file under a folder, so browsing it later doesn't wait for thumbnails.
 //
-// Jobs run one at a time, in the order they were queued, and live in memory only: a restart
-// loses them, and running one again skips what is already cached. Within a job, CheckWorkers
+// Jobs run one at a time, in the order they were queued. With Persist, queued and running jobs
+// are saved to a file whenever the queue changes and queued again at the next start (a job that
+// was running starts over; running one again skips what is already cached). A job can cover
+// several folders, and can first have the Backend prepare them (Prepare: e.g. refresh new
+// folders in the index). Within a job, CheckWorkers
 // files are looked at in parallel (the Backend's quick Check), and at most GenerateWorkers of
 // them are processed (thumbnails made) at once. While the Backend reports Busy (someone is
 // browsing and needs thumbnails made), the job starts nothing new until it isn't. What a job
@@ -12,8 +15,14 @@ package thumbjob
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,19 +53,28 @@ const (
 // Spec is what a job works on.
 type Spec struct {
 	Source string `json:"source"` // source name
-	Path   string `json:"path"`   // folder as the user sees it
-	User   string `json:"user"`   // who started it; gets the progress events
-	// Prefix is the folder's index path ("/a/b/"), the range the Backend lists.
-	Prefix string `json:"-"`
+	// Path is the folder as the user sees it; for a job with several folders, the folder they
+	// are all in.
+	Path  string   `json:"path"`
+	Paths []string `json:"paths,omitempty"` // the folders, when the job has more than one
+	User  string   `json:"user"`            // who started it; gets the progress events
+	// Refresh: the Backend's Prepare brings the folders into the index first (they may be new).
+	Refresh bool `json:"refresh,omitempty"`
+	// Prefixes are the folders' index paths ("/a/b/"), none inside another: the ranges the
+	// Backend lists, in this order.
+	Prefixes []string `json:"-"`
 	// Data is the Backend's own (e.g. the user to act as).
 	Data any `json:"-"`
 }
 
 // Backend lists a job's files and processes one file.
 type Backend interface {
+	// Prepare runs when the job starts, before Count (e.g. refreshing the folders in the index).
+	Prepare(ctx context.Context, spec Spec) error
 	Count(spec Spec) (int, error)
-	// Page returns up to limit file paths after `after`, in a stable order.
-	Page(spec Spec, after string, limit int) ([]string, error)
+	// Page returns up to limit file paths under prefix (one of spec.Prefixes) after `after`, in
+	// a stable order.
+	Page(spec Spec, prefix, after string, limit int) ([]string, error)
 	// Check is a quick look at one file (no decoding): ok = false when it can't tell, and the
 	// file then goes to Process.
 	Check(ctx context.Context, spec Spec, path string) (outcome Outcome, ok bool)
@@ -97,11 +115,18 @@ type Status struct {
 	Paused bool `json:"paused,omitempty"`
 	// PausedSeconds is the job's time spent paused so far.
 	PausedSeconds float64 `json:"pausedSeconds,omitempty"`
+	// Preparing is true while the Backend prepares the job's folders (Prepare), before counting.
+	Preparing bool `json:"preparing,omitempty"`
+	// Merged is set on the status Add returns when the request was already covered by a queued
+	// job, which is the one returned.
+	Merged bool `json:"merged,omitempty"`
+	// Restored is true for a job queued again from the saved queue at start.
+	Restored bool `json:"restored,omitempty"`
 }
 
 const (
 	MaxFailures     = 1000 // failures kept in a job's list and logged one by one
-	maxFinished     = 20   // finished jobs kept for the panel
+	maxFinished     = 20   // finished jobs kept for the panel, per user
 	pageSize        = 500
 	notifyEvery     = 2 * time.Second
 	logEveryAtMost  = 30 * time.Second // progress lines: at each 1%, but no closer together
@@ -145,6 +170,12 @@ type Manager struct {
 	// lastSecondsPerGenerated is the latest measured rate, for estimating new jobs.
 	lastSecondsPerGenerated float64
 	wake                    chan struct{}
+
+	// Persist: the file the queue is saved to ("" = not saved), the saved jobs not queued yet
+	// (their Backend wasn't ready), and a lock that keeps saves in order.
+	savePath   string
+	unrestored []savedJob
+	saveMu     sync.Mutex
 }
 
 // New starts a manager. notify, if not nil, gets each job's status as it changes (at most
@@ -155,21 +186,66 @@ func New(backend Backend, notify func(user string, st Status)) *Manager {
 	return m
 }
 
-// Add queues a job and returns its status.
+// Add queues a job and returns its status. When a queued job of the same user and source
+// already covers every folder of spec (and refreshes them, if spec asks for it), nothing is
+// added and that job's status is returned, with Merged set.
 func (m *Manager) Add(spec Spec) Status {
 	m.mu.Lock()
+	for _, q := range m.queue {
+		if q.st.User == spec.User && q.st.Source == spec.Source && (q.st.Refresh || !spec.Refresh) &&
+			covers(q.st.Prefixes, spec.Prefixes) {
+			st := m.snapshot(q)
+			m.mu.Unlock()
+			logger.Infof("[Thumbnails] request for source %q, path %q by %s: already in queued job %s", spec.Source, spec.Path, spec.User, st.ID)
+			st.Merged = true
+			return st
+		}
+	}
 	m.nextID++
 	j := &job{st: Status{ID: strconv.Itoa(m.nextID), Spec: spec, State: StateQueued, QueuedAt: time.Now()}}
 	m.queue = append(m.queue, j)
 	st := m.snapshot(j)
 	m.mu.Unlock()
-	logger.Infof("[Thumbnails] job %s queued: source %q, path %q, by %s", st.ID, spec.Source, spec.Path, spec.User)
+	logger.Infof("[Thumbnails] job %s queued: source %q, path %q%s, by %s", st.ID, spec.Source, spec.Path, foldersText(spec), spec.User)
+	m.save()
+	m.wakeUp()
+	m.send(st)
+	return st
+}
+
+func (m *Manager) wakeUp() {
 	select {
 	case m.wake <- struct{}{}:
 	default:
 	}
-	m.send(st)
-	return st
+}
+
+// covers reports whether every prefix in want is one of have or inside one of them.
+func covers(have, want []string) bool {
+	if len(want) == 0 {
+		return false
+	}
+	for _, w := range want {
+		ok := false
+		for _, h := range have {
+			if strings.HasPrefix(w, h) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// foldersText is ", N folders" for a job with several folders, for log lines.
+func foldersText(spec Spec) string {
+	if len(spec.Prefixes) > 1 {
+		return fmt.Sprintf(" (%d folders)", len(spec.Prefixes))
+	}
+	return ""
 }
 
 // List returns the running job, then queued jobs in order, then finished ones, newest first.
@@ -221,6 +297,7 @@ func (m *Manager) Cancel(id string) (Status, bool) {
 		j.st.FinishedAt = &now
 		m.addFinished(j)
 		logger.Infof("[Thumbnails] job %s cancelled before it started", j.st.ID)
+		defer m.save() // after m.mu is released below
 	case StateRunning:
 		if !j.cancel {
 			logger.Infof("[Thumbnails] job %s: cancel requested, stopping after the files in progress", j.st.ID)
@@ -261,10 +338,19 @@ func (m *Manager) find(id string) *job {
 	return nil
 }
 
+// addFinished keeps a finished job, dropping that user's oldest when they have more than
+// maxFinished. Caller holds m.mu.
 func (m *Manager) addFinished(j *job) {
 	m.finished = append(m.finished, j)
-	if len(m.finished) > maxFinished {
-		m.finished = m.finished[len(m.finished)-maxFinished:]
+	n := 0
+	for i := len(m.finished) - 1; i >= 0; i-- {
+		if m.finished[i].st.User != j.st.User {
+			continue
+		}
+		n++
+		if n > maxFinished {
+			m.finished = append(m.finished[:i], m.finished[i+1:]...)
+		}
 	}
 }
 
@@ -346,6 +432,7 @@ func (m *Manager) run(j *job) {
 			m.lastSecondsPerGenerated = st.SecondsPerGenerated
 		}
 		m.mu.Unlock()
+		m.save()
 		dur := now.Sub(*st.StartedAt).Round(time.Second)
 		if errMsg != "" {
 			logger.Errorf("[Thumbnails] job %s failed after %v: %s", id, dur, errMsg)
@@ -356,23 +443,48 @@ func (m *Manager) run(j *job) {
 		m.send(st)
 	}
 
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	m.mu.Lock()
+	j.stop = stop
+	if j.cancel { // cancelled between leaving the queue and here
+		stop()
+	}
+	j.st.Preparing = spec.Refresh
+	st := m.snapshot(j)
+	m.mu.Unlock()
+	if spec.Refresh {
+		m.send(st)
+		began := time.Now()
+		err := m.backend.Prepare(ctx, spec)
+		m.mu.Lock()
+		j.st.Preparing = false
+		m.mu.Unlock()
+		if err != nil {
+			finish(StateFailed, fmt.Sprintf("refreshing the index: %v", err))
+			return
+		}
+		logger.Infof("[Thumbnails] job %s: refreshed %d folder(s) in the index in %v", id, len(spec.Prefixes), time.Since(began).Round(time.Millisecond))
+		if m.cancelled(j) {
+			finish(StateCancelled, "")
+			return
+		}
+	} else if err := m.backend.Prepare(ctx, spec); err != nil {
+		finish(StateFailed, fmt.Sprintf("preparing: %v", err))
+		return
+	}
+
 	total, err := m.backend.Count(spec)
 	if err != nil {
 		finish(StateFailed, fmt.Sprintf("listing files: %v", err))
 		return
 	}
-	ctx, stop := context.WithCancel(context.Background())
-	defer stop()
 	m.mu.Lock()
 	j.st.Total = total
 	j.lastLog = time.Now()
-	j.stop = stop
-	if j.cancel { // cancelled between leaving the queue and here
-		stop()
-	}
-	st := m.snapshot(j)
+	st = m.snapshot(j)
 	m.mu.Unlock()
-	logger.Infof("[Thumbnails] job %s started: source %q, path %q, %d previewable files", id, spec.Source, spec.Path, total)
+	logger.Infof("[Thumbnails] job %s started: source %q, path %q%s, %d previewable files", id, spec.Source, spec.Path, foldersText(spec), total)
 	m.send(st)
 
 	paths := make(chan string)
@@ -401,29 +513,32 @@ func (m *Manager) run(j *job) {
 	}
 }
 
-// feed sends the job's files on paths until the list ends or ctx is cancelled.
+// feed sends the job's files on paths, folder by folder, until the lists end or ctx is cancelled.
 func (m *Manager) feed(ctx context.Context, spec Spec, paths chan<- string) error {
-	after := spec.Prefix
-	for {
-		if ctx.Err() != nil {
-			return nil
-		}
-		page, err := m.backend.Page(spec, after, pageSize)
-		if err != nil {
-			return err
-		}
-		if len(page) == 0 {
-			return nil
-		}
-		for _, p := range page {
-			select {
-			case paths <- p:
-			case <-ctx.Done():
+	for _, prefix := range spec.Prefixes {
+		after := prefix
+		for {
+			if ctx.Err() != nil {
 				return nil
 			}
+			page, err := m.backend.Page(spec, prefix, after, pageSize)
+			if err != nil {
+				return err
+			}
+			if len(page) == 0 {
+				break
+			}
+			for _, p := range page {
+				select {
+				case paths <- p:
+				case <-ctx.Done():
+					return nil
+				}
+			}
+			after = page[len(page)-1]
 		}
-		after = page[len(page)-1]
 	}
+	return nil
 }
 
 func pausedText(st Status) string {
@@ -601,4 +716,211 @@ func errText(err error) string {
 		return "unknown error"
 	}
 	return err.Error()
+}
+
+// ErrNotReady, from a Restorer, means the saved job can't be rebuilt yet (e.g. its source's
+// index isn't loaded): it is tried again a little later.
+var ErrNotReady = errors.New("not ready yet")
+
+// Restorer rebuilds a saved job's spec at start (Prefixes, Data, checks), from the fields that
+// are saved: Source, Path, Paths, User, Refresh.
+type Restorer func(Spec) (Spec, error)
+
+// savedJob is a queued or running job as written to the save file.
+type savedJob struct {
+	ID       string    `json:"id"`
+	Source   string    `json:"source"`
+	Path     string    `json:"path"`
+	Paths    []string  `json:"paths,omitempty"`
+	User     string    `json:"user"`
+	Refresh  bool      `json:"refresh,omitempty"`
+	QueuedAt time.Time `json:"queuedAt"`
+}
+
+type savedQueue struct {
+	NextID int        `json:"nextId"`
+	Jobs   []savedJob `json:"jobs"`
+}
+
+var (
+	restoreEvery  = 5 * time.Second
+	restoreGiveUp = time.Hour
+)
+
+// Persist makes the queue survive restarts: it reads the jobs saved in path by an earlier run,
+// queues them again (in their old order, ahead of anything queued since) as restore rebuilds
+// them, and from then on saves the queued and running jobs to path whenever the queue changes.
+// Jobs restore can't rebuild yet (ErrNotReady) are retried every few seconds for an hour and
+// stay in the file meanwhile; jobs it rejects are dropped. Call it once, at start.
+func (m *Manager) Persist(path string, restore Restorer) {
+	var saved savedQueue
+	data, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		if err := json.Unmarshal(data, &saved); err != nil {
+			logger.Errorf("[Thumbnails] saved queue %s unreadable, starting empty: %v", path, err)
+			saved = savedQueue{}
+		}
+	case !errors.Is(err, os.ErrNotExist):
+		logger.Errorf("[Thumbnails] reading the saved queue %s: %v", path, err)
+	}
+	m.mu.Lock()
+	m.savePath = path
+	if saved.NextID > m.nextID {
+		m.nextID = saved.NextID
+	}
+	for _, sj := range saved.Jobs {
+		if n, err := strconv.Atoi(sj.ID); err == nil && n > m.nextID {
+			m.nextID = n
+		}
+	}
+	m.unrestored = saved.Jobs
+	m.mu.Unlock()
+	if len(saved.Jobs) == 0 {
+		m.save()
+		return
+	}
+	logger.Infof("[Thumbnails] %d saved job(s) to queue again", len(saved.Jobs))
+	go m.restoreLoop(restore)
+}
+
+func (m *Manager) restoreLoop(restore Restorer) {
+	deadline := time.Now().Add(restoreGiveUp)
+	for {
+		left := m.restoreOnce(restore)
+		if left == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			logger.Errorf("[Thumbnails] %d saved job(s) still can't be queued after %v; they stay saved for the next start", left, restoreGiveUp)
+			return
+		}
+		time.Sleep(restoreEvery)
+	}
+}
+
+// restoreOnce tries every saved job not queued yet and returns how many are left.
+func (m *Manager) restoreOnce(restore Restorer) int {
+	m.mu.Lock()
+	pending := append([]savedJob(nil), m.unrestored...)
+	m.mu.Unlock()
+	var keep []savedJob
+	var restored []*job
+	for _, sj := range pending {
+		spec, err := safeRestore(restore, Spec{Source: sj.Source, Path: sj.Path, Paths: sj.Paths, User: sj.User, Refresh: sj.Refresh})
+		switch {
+		case errors.Is(err, ErrNotReady):
+			keep = append(keep, sj)
+		case err != nil:
+			logger.Warningf("[Thumbnails] saved job %s (source %q, path %q, by %s) dropped: %v", sj.ID, sj.Source, sj.Path, sj.User, err)
+		default:
+			restored = append(restored, &job{st: Status{ID: sj.ID, Spec: spec, State: StateQueued, QueuedAt: sj.QueuedAt, Restored: true}})
+		}
+	}
+	m.mu.Lock()
+	m.unrestored = keep
+	// Restored jobs go ahead of jobs queued since the start, in their old order.
+	m.queue = append(restored, m.queue...)
+	sort.SliceStable(m.queue, func(a, b int) bool {
+		ra, rb := m.queue[a].st.Restored, m.queue[b].st.Restored
+		if ra != rb {
+			return ra
+		}
+		if ra {
+			return idLess(m.queue[a].st.ID, m.queue[b].st.ID)
+		}
+		return false
+	})
+	var sts []Status
+	for _, j := range restored {
+		sts = append(sts, m.snapshot(j))
+	}
+	m.mu.Unlock()
+	for _, st := range sts {
+		logger.Infof("[Thumbnails] job %s queued again from the saved queue: source %q, path %q%s, by %s", st.ID, st.Source, st.Path, foldersText(st.Spec), st.User)
+		m.send(st)
+	}
+	if len(restored) > 0 || len(keep) != len(pending) {
+		m.save()
+		m.wakeUp()
+	}
+	return len(keep)
+}
+
+func safeRestore(restore Restorer, spec Spec) (out Spec, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic: %v", r)
+		}
+	}()
+	return restore(spec)
+}
+
+func idLess(a, b string) bool {
+	na, ea := strconv.Atoi(a)
+	nb, eb := strconv.Atoi(b)
+	if ea == nil && eb == nil {
+		return na < nb
+	}
+	return a < b
+}
+
+// save writes the running and queued jobs (and saved ones not queued again yet) to the save
+// file, replacing it whole. Callers must not hold m.mu. A failed save is logged; the queue in
+// memory goes on.
+func (m *Manager) save() {
+	m.saveMu.Lock()
+	defer m.saveMu.Unlock()
+	m.mu.Lock()
+	path := m.savePath
+	if path == "" {
+		m.mu.Unlock()
+		return
+	}
+	q := savedQueue{NextID: m.nextID, Jobs: []savedJob{}}
+	add := func(j *job) {
+		q.Jobs = append(q.Jobs, savedJob{ID: j.st.ID, Source: j.st.Source, Path: j.st.Path, Paths: j.st.Paths,
+			User: j.st.User, Refresh: j.st.Refresh, QueuedAt: j.st.QueuedAt})
+	}
+	if m.running != nil && !m.running.cancel {
+		add(m.running)
+	}
+	for _, j := range m.queue {
+		add(j)
+	}
+	q.Jobs = append(q.Jobs, m.unrestored...)
+	m.mu.Unlock()
+
+	data, err := json.MarshalIndent(q, "", "  ")
+	if err == nil {
+		err = writeFileAtomic(path, data)
+	}
+	if err != nil {
+		logger.Errorf("[Thumbnails] saving the queue to %s: %v", path, err)
+	}
+}
+
+func writeFileAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	_, err = tmp.Write(data)
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Chmod(name, 0o600)
+	}
+	if err == nil {
+		err = os.Rename(name, path)
+	}
+	if err != nil {
+		_ = os.Remove(name)
+	}
+	return err
 }

@@ -3,7 +3,7 @@
 // by "thumbnailJob" events. Read by ThumbnailJobProgress.vue and prompts/ThumbnailJobs.vue.
 import { reactive } from "vue";
 import * as api from "@/api/thumbnailJobs.js";
-import { getters } from "@/store/index.ts";
+import { getters, state } from "@/store/index.ts";
 
 export const thumbnailJobs = reactive({
   /** @type {Record<string, any>} id → latest status */
@@ -39,9 +39,38 @@ export function allJobs() {
   return sortJobs(Object.values(thumbnailJobs.byId));
 }
 
-/** Jobs for the progress box: active ones, and finished ones watched here and not dismissed. */
+/**
+ * Whether the user can use thumbnail jobs: admins, and users with API access (they see and
+ * cancel only their own jobs; the server enforces that too).
+ */
+export function canUseThumbnailJobs() {
+  return getters.isLoggedIn() && !getters.isShare() && (getters.isAdmin() || state.user?.permissions?.api === true);
+}
+
+/** Whether a job was started by the user looking at it. */
+export function isOwnJob(job) {
+  return !!job && job.user === state.user?.username;
+}
+
+/**
+ * Jobs for the progress box: the user's own active ones, and own finished ones watched here and
+ * not dismissed. Other users' jobs (admins get them in the list) are in the panel only.
+ */
 export function progressJobs() {
-  return allJobs().filter((j) => isActive(j) || (thumbnailJobs.watched[j.id] && !thumbnailJobs.dismissed[j.id]));
+  return allJobs().filter(
+    (j) => isOwnJob(j) && (isActive(j) || (thumbnailJobs.watched[j.id] && !thumbnailJobs.dismissed[j.id])),
+  );
+}
+
+/** How many folders a job covers (a job made from several folders lists them in paths). */
+export function folderCount(job) {
+  return Array.isArray(job?.paths) && job.paths.length > 1 ? job.paths.length : 1;
+}
+
+/** A job's folders for a tooltip: "source: /a/b", one line per folder. */
+export function jobTitle(job) {
+  const paths = folderCount(job) > 1 ? job.paths : [job?.path];
+  return paths.map((p) => `${job?.source}: ${p}`).join("\n");
 }
 
 /**
@@ -80,9 +109,9 @@ export function applyList(resp) {
   thumbnailJobs.secondsPerFile = resp?.secondsPerFile || 0;
 }
 
-/** Reloads the jobs from the server (admins only; quietly does nothing otherwise). */
+/** Reloads the jobs from the server (users who can use jobs; quietly does nothing otherwise). */
 export async function refreshThumbnailJobs() {
-  if (!getters.isLoggedIn() || !getters.isAdmin() || getters.isShare()) return;
+  if (!canUseThumbnailJobs()) return;
   try {
     applyList(await api.list());
   } catch (err) {
