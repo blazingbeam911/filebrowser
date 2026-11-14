@@ -51,10 +51,20 @@ func encodeJPEG(t *testing.T, w, h int) []byte {
 	return buf.Bytes()
 }
 
+// mustCacheHash is cacheHashFor for a file that must be readable.
+func mustCacheHash(t *testing.T, file iteminfo.ExtendedFileInfo) string {
+	t.Helper()
+	hash, err := cacheHashFor(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hash
+}
+
 // cachedBytes returns what the cache holds for file at size (seek 0).
 func cachedBytes(t *testing.T, svc *Service, file iteminfo.ExtendedFileInfo, size string) []byte {
 	t.Helper()
-	data, found, err := svc.fileCache.Load(context.Background(), CacheKey(cacheHashFor(file), size, 0))
+	data, found, err := svc.fileCache.Load(context.Background(), CacheKey(mustCacheHash(t, file), size, 0))
 	if err != nil || !found {
 		t.Fatalf("%s %s: not in the cache (%v)", file.Name, size, err)
 	}
@@ -179,7 +189,7 @@ func TestPregenerateFailures(t *testing.T) {
 	}
 
 	marked := writeImageFile(t, dir, "marked.png", "image/png", good)
-	if err := svc.fileCache.Store(context.Background(), CacheKey(cacheHashFor(marked), "small", 0), []byte{}); err != nil {
+	if err := svc.fileCache.Store(context.Background(), CacheKey(mustCacheHash(t, marked), "small", 0), []byte{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Pregenerate(context.Background(), marked, []string{"small", "large"}); !errors.Is(err, ErrPreviewTooSmall) {

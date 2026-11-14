@@ -276,19 +276,18 @@ func resourceDeleteHandler(w http.ResponseWriter, r *http.Request, d *Context) (
 	}
 	fullIndexPath := utils.JoinScopedIndexPath(userScope, path)
 
-	// delete thumbnails
-	preview.DelThumbs(r.Context(), *fileInfo)
-
 	if _, ok := settings.Config.Server.NameToSource[source]; !ok {
 		return http.StatusNotFound, fmt.Errorf("source %s not found", source)
 	}
 
+	thumbs := thumbsBeforeDelete(idx, fullIndexPath, fileInfo) // fufu: before, while it can be stat'ed
 	adjustments := prepareDeleteQuotaAdjustments(d, source, fullIndexPath, fileInfo)
 	err = files.DeleteFiles(source, userScope, fullIndexPath, fileInfo.Type == "directory")
 	if err != nil {
 		return ErrToStatus(err), err
 	}
 	applyDeleteQuotaAdjustments(adjustments)
+	thumbs.Delete(r.Context())
 	activity.RecordDelete(r, toActor(d), source, path)
 	return http.StatusOK, nil
 
@@ -316,6 +315,7 @@ func publicDeleteHandler(w http.ResponseWriter, r *http.Request, d *Context) (in
 	fullIndexPath := utils.JoinScopedIndexPath(userScope, d.IndexPath)
 	boundIndexPath := utils.JoinScopedIndexPath(userScope, shareRelPath)
 	sourceName := d.Share.GetSourceName()
+	thumbs := thumbsBeforeDelete(indexing.GetIndex(d.Share.SourcePath), fullIndexPath, fileInfo) // fufu
 	adjustments := prepareDeleteQuotaAdjustments(d, sourceName, fullIndexPath, fileInfo)
 	err = files.DeleteFiles(d.Share.SourcePath, boundIndexPath, fullIndexPath, fileInfo.Type == "directory")
 	if err != nil {
@@ -323,7 +323,7 @@ func publicDeleteHandler(w http.ResponseWriter, r *http.Request, d *Context) (in
 		return http.StatusInternalServerError, fmt.Errorf("an error occured while deleting the resource")
 	}
 	applyDeleteQuotaAdjustments(adjustments)
-	preview.DelThumbs(r.Context(), *fileInfo)
+	thumbs.Delete(r.Context())
 	activity.RecordDelete(r, toActor(d), d.Share.GetSourceName(), fileInfo.Path)
 	return http.StatusOK, nil
 }
@@ -489,6 +489,7 @@ func ResourceBulkDeleteHandler(w http.ResponseWriter, r *http.Request, d *Contex
 			boundIndexPath := utils.JoinScopedIndexPath(userScope, withoutUserScope)
 			fullIndexPath := utils.JoinScopedIndexPath(userScope, indexPath)
 
+			thumbs := thumbsBeforeDelete(idx, fullIndexPath, fileInfo) // fufu
 			adjustments := prepareDeleteQuotaAdjustments(d, sourceName, fullIndexPath, fileInfo)
 			err = files.DeleteFiles(sourceName, boundIndexPath, fullIndexPath, fileInfo.Type == "directory")
 			if err != nil {
@@ -501,8 +502,7 @@ func ResourceBulkDeleteHandler(w http.ResponseWriter, r *http.Request, d *Contex
 				continue
 			}
 			applyDeleteQuotaAdjustments(adjustments)
-			// Delete thumbnails
-			preview.DelThumbs(r.Context(), *fileInfo)
+			thumbs.Delete(r.Context())
 			activityPath = fileInfo.Path
 		} else {
 			// Regular user context - validate source and check user scope
@@ -570,6 +570,7 @@ func ResourceBulkDeleteHandler(w http.ResponseWriter, r *http.Request, d *Contex
 				continue
 			}
 			fullIndexPath := utils.JoinScopedIndexPath(userScope, sanitizedPath)
+			thumbs := thumbsBeforeDelete(idx, fullIndexPath, fileInfo) // fufu
 			adjustments := prepareDeleteQuotaAdjustments(d, item.Source, fullIndexPath, fileInfo)
 			err = files.DeleteFiles(item.Source, userScope, fullIndexPath, fileInfo.Type == "directory")
 			if err != nil {
@@ -581,7 +582,7 @@ func ResourceBulkDeleteHandler(w http.ResponseWriter, r *http.Request, d *Contex
 				continue
 			}
 			applyDeleteQuotaAdjustments(adjustments)
-			preview.DelThumbs(r.Context(), *fileInfo)
+			thumbs.Delete(r.Context())
 		}
 		// Success — echo the client path in the response
 		loggedItem := BulkDeleteItem{
@@ -1786,7 +1787,7 @@ func patchAction(ctx context.Context, params patchActionParams) error {
 			srcPath = strings.TrimPrefix(srcPath, userScope)
 		}
 
-		fileInfo, err := files.FileInfoFaster(utils.FileOptions{
+		_, err := files.FileInfoFaster(utils.FileOptions{
 			FollowSymlinks: true,
 			Path:           srcPath,
 			Source:         params.srcIndex,
@@ -1799,8 +1800,7 @@ func patchAction(ctx context.Context, params patchActionParams) error {
 			return err
 		}
 
-		// delete thumbnails
-		preview.DelThumbs(ctx, *fileInfo)
+		// fufu: thumbnails are keyed by the file, not the path, so a moved file keeps them
 		err = files.MoveResource(params.isSrcDir, params.srcIndex, params.dstIndex, params.src, params.dst)
 		if err != nil {
 			return err
@@ -1923,4 +1923,14 @@ func moveCopyWithClientPaths(item MoveCopyItem, clientFrom, clientTo string) Mov
 	item.FromPath = clientFrom
 	item.ToPath = clientTo
 	return item
+}
+
+// thumbsBeforeDelete (fufu) reads, before deleting the entry at fullIndexPath, which cached
+// previews to delete once it is gone: the file's, if this entry is its last link.
+func thumbsBeforeDelete(idx *indexing.Index, fullIndexPath string, fileInfo *iteminfo.ExtendedFileInfo) preview.ThumbDeletion {
+	if idx == nil || fileInfo == nil || fileInfo.Type == "directory" {
+		return preview.ThumbDeletion{}
+	}
+	entryPath := utils.JoinUnderSourceRoot(idx.Path, fullIndexPath)
+	return preview.ThumbsBeforeDelete(entryPath, strings.HasPrefix(fileInfo.Type, "video"))
 }

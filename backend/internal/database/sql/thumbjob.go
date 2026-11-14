@@ -49,3 +49,35 @@ func (db *IndexDB) PreviewableFilesAfter(source, dirPrefix, after string, limit 
 	}
 	return paths, rows.Err()
 }
+
+// PreviewFile is a file with a preview and its type, as the index has them.
+type PreviewFile struct {
+	Path string
+	Type string
+}
+
+// PreviewableFilesWithTypeAfter is PreviewableFilesAfter for the whole source, with each file's
+// type (for re-keying the thumbnail cache, which needs to know the videos).
+func (db *IndexDB) PreviewableFilesWithTypeAfter(source, after string, limit int) ([]PreviewFile, error) {
+	if after < "/" {
+		after = "/"
+	}
+	rows, err := db.Query(`
+	SELECT path, type FROM index_items
+	WHERE source = ? AND path > ? AND is_dir = 0 AND has_preview = 1
+	ORDER BY path LIMIT ?
+	`, source, after, limit)
+	if err != nil {
+		return nil, sqlitebusy.Wrap(err)
+	}
+	defer rows.Close()
+	var files []PreviewFile
+	for rows.Next() {
+		var f PreviewFile
+		if err := rows.Scan(&f.Path, &f.Type); err != nil {
+			return nil, err
+		}
+		files = append(files, f)
+	}
+	return files, rows.Err()
+}

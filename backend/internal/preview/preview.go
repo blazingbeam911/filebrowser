@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/gtsteffaniak/filebrowser/backend/internal/adapters/fs/diskcache"
 	"github.com/gtsteffaniak/filebrowser/backend/internal/adapters/fs/fileutils"
@@ -52,7 +51,8 @@ type Service struct {
 //	7+ processors: 3 large, rest small
 func NewPreviewGenerator(concurrencyLimit int, cacheDir string) *Service {
 	configureImagingParallelism()
-	logWebPDecoder() // fufu: webp_decode.go
+	logWebPDecoder()       // fufu: webp_decode.go
+	logSourceFileSystems() // fufu: filekey_unix.go
 
 	if concurrencyLimit < 1 {
 		concurrencyLimit = 1
@@ -185,19 +185,11 @@ func GetPreviewForFile(ctx context.Context, file iteminfo.ExtendedFileInfo, prev
 		return nil, ctx.Err()
 	}
 
-	// Generate fast cache key based on file metadata
-	var cacheHash string
-	if file.Metadata != nil && len(file.Metadata.AlbumArt) > 0 {
-		// For audio with album art, hash the album art content
-		hasher := md5.New()
-		_, _ = hasher.Write(file.Metadata.AlbumArt)
-		cacheHash = hex.EncodeToString(hasher.Sum(nil))
-	} else {
-		// For all other files, use fast metadata-based hash
-		hasher := md5.New()
-		cacheString := fmt.Sprintf("%s:%d:%s", file.RealPath, file.Size, file.ModTime.Format(time.RFC3339Nano))
-		_, _ = hasher.Write([]byte(cacheString))
-		cacheHash = hex.EncodeToString(hasher.Sum(nil))
+	// fufu: the cache key identifies the file, not the path (filekey_unix.go), so hard links
+	// and moved files share their thumbnails. Audio with album art is keyed by the art.
+	cacheHash, err := cacheHashFor(file)
+	if err != nil {
+		return nil, err
 	}
 
 	cacheKey := CacheKey(cacheHash, previewSize, seekPercentage)
@@ -563,12 +555,10 @@ func GeneratePreviewWithMD5(ctx context.Context, file iteminfo.ExtendedFileInfo,
 }
 
 func GeneratePreview(ctx context.Context, file iteminfo.ExtendedFileInfo, previewSize, officeUrl string, seekPercentage int) ([]byte, error) {
-	// Generate fast metadata-based cache key
-	hasher := md5.New()
-	cacheString := fmt.Sprintf("%s:%d:%s", file.RealPath, file.Size, file.ModTime.Format(time.RFC3339Nano))
-	_, _ = hasher.Write([]byte(cacheString))
-	cacheHash := hex.EncodeToString(hasher.Sum(nil))
-
+	cacheHash, err := cacheHashFor(file) // fufu: keyed like GetPreviewForFile
+	if err != nil {
+		return nil, err
+	}
 	return GeneratePreviewWithMD5(ctx, file, previewSize, officeUrl, seekPercentage, cacheHash)
 }
 
@@ -654,18 +644,73 @@ func CacheKey(md5, previewSize string, percentage int) string {
 	return key
 }
 
+// DelThumbs deletes the cached previews of file as it is now, for when its content is about to
+// be replaced (an upload over it). Other paths to the same file (hard links) see the new
+// content too, so their previews go with it.
 func DelThumbs(ctx context.Context, file iteminfo.ExtendedFileInfo) {
-	// Generate metadata-based cache hash for deletion
-	hasher := md5.New()
-	cacheString := fmt.Sprintf("%s:%d:%s", file.RealPath, file.Size, file.ModTime.Format(time.RFC3339Nano))
-	_, _ = hasher.Write([]byte(cacheString))
-	cacheHash := hex.EncodeToString(hasher.Sum(nil))
+	if service == nil || file.Type == "directory" {
+		return
+	}
+	hash, _, err := FileKey(file.RealPath)
+	if err != nil {
+		logger.Debugf("Could not delete thumbnails of %v: %v", file.Name, err)
+		return
+	}
+	deleteThumbs(ctx, hash, strings.HasPrefix(file.Type, "video"))
+}
 
-	errSmall := service.fileCache.Delete(ctx, CacheKey(cacheHash, "small", 0))
-	if errSmall != nil {
-		errLarge := service.fileCache.Delete(ctx, CacheKey(cacheHash, "large", 0))
-		if errLarge != nil {
-			logger.Debugf("Could not delete thumbnail: %v", file.Name)
+// ThumbDeletion is what to delete from the cache once a delete has succeeded (see
+// ThumbsBeforeDelete). The zero value deletes nothing.
+type ThumbDeletion struct {
+	hash  string
+	video bool
+}
+
+// ThumbsBeforeDelete is called before the entry at entryPath (a path whose last element is not
+// resolved, as deleting it removes that entry, not a symlink's target) is deleted. It returns
+// the previews to delete afterwards: those of the file when this entry is its last link, and
+// nothing for a symlink, a directory, or a file that keeps other hard links (their previews
+// stay valid).
+func ThumbsBeforeDelete(entryPath string, isVideo bool) ThumbDeletion {
+	info, err := os.Lstat(entryPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return ThumbDeletion{}
+	}
+	hash, nlink, err := FileKeyFromInfo(entryPath, info)
+	if err != nil || nlink > 1 {
+		return ThumbDeletion{}
+	}
+	return ThumbDeletion{hash: hash, video: isVideo}
+}
+
+// Delete deletes the previews ThumbsBeforeDelete chose; call it after the delete succeeded.
+func (t ThumbDeletion) Delete(ctx context.Context) {
+	if service == nil || t.hash == "" {
+		return
+	}
+	deleteThumbs(ctx, t.hash, t.video)
+}
+
+// deleteThumbs deletes both sizes at seek 0 and, for a video, at every seek percentage
+// (motion previews and the player's scrub frames). Entries are looked at first and only the
+// ones present are deleted: the cache keeps a lock for every key it ever deleted.
+func deleteThumbs(ctx context.Context, hash string, video bool) {
+	maxPct := 0
+	if video {
+		maxPct = 100
+	}
+	sc, canStat := service.fileCache.(statSizer)
+	for pct := 0; pct <= maxPct; pct++ {
+		for _, size := range []string{"small", "large"} {
+			key := CacheKey(hash, size, pct)
+			if canStat {
+				if _, found, err := sc.StatSize(key); err == nil && !found {
+					continue
+				}
+			}
+			if err := service.fileCache.Delete(ctx, key); err != nil {
+				logger.Debugf("Could not delete thumbnail %s/%d: %v", size, pct, err)
+			}
 		}
 	}
 }

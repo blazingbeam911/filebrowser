@@ -2,6 +2,7 @@ package preview
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 )
@@ -72,9 +73,13 @@ func TestCachedFromStat(t *testing.T) {
 	svc := NewPreviewGenerator(2, t.TempDir())
 	useService(t, svc)
 	file := writeImageFile(t, t.TempDir(), "a.png", "image/png", []byte("x"))
-	hash := cacheHashFor(file)
+	hash := mustCacheHash(t, file)
 	sizes := []string{"small", "large"}
-	check := func() bool { return CachedFromStat(file.RealPath, file.Size, file.ModTime, sizes) }
+	info, err := os.Stat(file.RealPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func() bool { return CachedFromStat(file.RealPath, info, sizes) }
 	ctx := context.Background()
 	store := func(size string, n int) {
 		if err := svc.fileCache.Store(ctx, CacheKey(hash, size, 0), make([]byte, n)); err != nil {
@@ -96,7 +101,14 @@ func TestCachedFromStat(t *testing.T) {
 	if !check() {
 		t.Fatal("not cached with both sizes stored")
 	}
-	if CachedFromStat(file.RealPath, file.Size, file.ModTime.Add(time.Nanosecond), sizes) {
+	newTime := info.ModTime().Add(time.Nanosecond)
+	if err := os.Chtimes(file.RealPath, newTime, newTime); err != nil {
+		t.Fatal(err)
+	}
+	if info, err = os.Stat(file.RealPath); err != nil {
+		t.Fatal(err)
+	}
+	if check() {
 		t.Fatal("cached for another modification time")
 	}
 }

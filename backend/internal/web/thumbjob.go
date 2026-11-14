@@ -243,7 +243,7 @@ func (thumbJobBackend) Busy() bool {
 
 // Check is the quick look at a file that may already be done: one stat of the file and one of
 // each cache entry, no xattrs, no image header, no reading cache entries. It decides only
-//   - a plain regular file (not a symlink, whose key uses the link's target) whose small and
+//   - a plain regular file (not a symlink; Process follows it to its target) whose small and
 //     large thumbnails are all in the cache under the key browsing computes, and
 //   - an image browsing sends as it is because it is under 256 KB (or resizing is off).
 //
@@ -264,7 +264,7 @@ func (thumbJobBackend) Check(_ context.Context, spec thumbjob.Spec, indexPath st
 	if quickServedAsOriginal(ext, size) {
 		return thumbjob.Cached, true
 	}
-	if preview.CachedFromStat(realPath, size, fi.ModTime(), thumbJobSizes) {
+	if preview.CachedFromStat(realPath, fi, thumbJobSizes) {
 		return thumbjob.Cached, true
 	}
 	return thumbjob.Failed, false

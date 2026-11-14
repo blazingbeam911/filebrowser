@@ -18,7 +18,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/gtsteffaniak/filebrowser/backend/pkg/indexing/iteminfo"
 	"github.com/kovidgoyal/imaging"
@@ -33,15 +32,15 @@ type PregenResult struct {
 // errNoService is returned when the preview service hasn't been started.
 var errNoService = errors.New("preview service is not running")
 
-// cacheHashFor is the cache hash GetPreviewForFile computes for a file.
-func cacheHashFor(file iteminfo.ExtendedFileInfo) string {
-	hasher := md5.New()
+// cacheHashFor is the cache hash GetPreviewForFile computes for a file: the hash of the album
+// art for audio that has it, otherwise FileKey of the file on disk.
+func cacheHashFor(file iteminfo.ExtendedFileInfo) (string, error) {
 	if file.Metadata != nil && len(file.Metadata.AlbumArt) > 0 {
-		_, _ = hasher.Write(file.Metadata.AlbumArt)
-	} else {
-		_, _ = fmt.Fprintf(hasher, "%s:%d:%s", file.RealPath, file.Size, file.ModTime.Format(time.RFC3339Nano))
+		sum := md5.Sum(file.Metadata.AlbumArt)
+		return hex.EncodeToString(sum[:]), nil
 	}
-	return hex.EncodeToString(hasher.Sum(nil))
+	hash, _, err := FileKey(file.RealPath)
+	return hash, err
 }
 
 // statSizer is a cache that can tell an entry's size without reading it (diskcache.FileCache).
@@ -50,10 +49,11 @@ type statSizer interface {
 }
 
 // CachedFromStat reports whether every given size (at seek 0) is already in the cache for the
-// file at realPath with this size and modification time, the key GetPreviewForFile computes for
-// a file without album art. It only stats the cache entries; an entry under minPreviewSize
-// (the empty marker of a failed attempt) counts as not cached, so the file goes the full way.
-func CachedFromStat(realPath string, size int64, modTime time.Time, sizes []string) bool {
+// file at realPath, which the caller has stat'ed as info: the key GetPreviewForFile computes
+// for a file without album art. It only stats the cache entries; an entry under
+// minPreviewSize (the empty marker of a failed attempt) counts as not cached, so the file
+// goes the full way.
+func CachedFromStat(realPath string, info os.FileInfo, sizes []string) bool {
 	if service == nil {
 		return false
 	}
@@ -61,11 +61,10 @@ func CachedFromStat(realPath string, size int64, modTime time.Time, sizes []stri
 	if !ok {
 		return false
 	}
-	var file iteminfo.ExtendedFileInfo
-	file.RealPath = realPath
-	file.Size = size
-	file.ModTime = modTime
-	hash := cacheHashFor(file)
+	hash, _, err := FileKeyFromInfo(realPath, info)
+	if err != nil {
+		return false
+	}
 	for _, s := range sizes {
 		n, found, err := sc.StatSize(CacheKey(hash, s, 0))
 		if err != nil || !found || n < minPreviewSize {
@@ -86,7 +85,10 @@ func Pregenerate(ctx context.Context, file iteminfo.ExtendedFileInfo, sizes []st
 	if !file.HasPreview {
 		return res, ErrUnsupportedMedia
 	}
-	hash := cacheHashFor(file)
+	hash, err := cacheHashFor(file)
+	if err != nil {
+		return res, err
+	}
 	var missing []string
 	for _, size := range sizes {
 		data, found, err := service.fileCache.Load(ctx, CacheKey(hash, size, 0))
