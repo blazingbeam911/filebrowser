@@ -210,7 +210,10 @@ func PreviewHelperFunc(w http.ResponseWriter, r *http.Request, d *Context) (int,
 	}
 
 	previewSize := r.URL.Query().Get("size")
-	if !(previewSize == "large" || previewSize == "original" || previewSize == "xlarge") {
+	if previewSize == "full" && !preview.IsPSD(d.FileInfo.Type, d.FileInfo.Name) {
+		previewSize = "original" // fufu: "full" (uncapped) exists only for PSDs (psd.go)
+	}
+	if !(previewSize == "large" || previewSize == "original" || previewSize == "xlarge" || previewSize == "full") {
 		previewSize = "small"
 	}
 	if !d.FileInfo.HasPreview {

@@ -31,7 +31,7 @@ import { state } from '@/store/index.ts';
 import { globalVars } from '@/utils/constants.js';
 import { isRawImageMimeType } from '@/utils/mimetype.js';
 import { removeTrailingSlash } from '@/utils/url.js';
-import { isPdfConvertable, isServerConvertedImage, previewRawUrl } from './previewRawUrl.js';
+import { isPdfConvertable, isPsd, isServerConvertedImage, previewRawUrl, psdFullUrl } from './previewRawUrl.js';
 
 function mockState() {
   return state;
@@ -254,5 +254,33 @@ describe('isServerConvertedImage', () => {
 
   it('is false for no item', () => {
     expect(isServerConvertedImage(null)).toBe(false);
+  });
+});
+
+// fufu: PSDs are shown from the server's conversion (original = capped at 4096 px; full on request).
+describe('PSD', () => {
+  const psd = { source: 'src', path: '/art/a.psd', name: 'a.psd', type: 'image/vnd.adobe.photoshop', modified: '2026-01-01T00:00:00Z', viewToken: 'tok' };
+
+  beforeEach(() => {
+    state.shareInfo = { hash: '', subPath: '' };
+  });
+
+  it('is recognised by type or by .psd/.psb name', () => {
+    expect(isPsd(psd)).toBe(true);
+    expect(isPsd({ name: 'B.PSB', type: 'application/octet-stream' })).toBe(true);
+    expect(isPsd({ name: 'c.png', type: 'image/png' })).toBe(false);
+    expect(isPsd(null)).toBe(false);
+  });
+
+  it('uses the converted original, never the file itself', () => {
+    expect(isServerConvertedImage(psd)).toBe(true);
+    expect(previewRawUrl(psd)).toBe(`${resourcesApi.getPreviewURL('src', '/art/a.psd', psd.modified)}&size=original`);
+  });
+
+  it('builds the full-size URL, also in shares', () => {
+    expect(psdFullUrl(psd)).toBe(`${resourcesApi.getPreviewURL('src', '/art/a.psd', psd.modified)}&size=full`);
+    state.shareInfo = { hash: 'h', subPath: '/' };
+    expect(psdFullUrl(psd)).toBe(resourcesApi.getPreviewURLPublic('/art/a.psd', 'full', 'tok'));
+    expect(previewRawUrl(psd)).toBe(resourcesApi.getPreviewURLPublic('/art/a.psd', 'original', 'tok'));
   });
 });

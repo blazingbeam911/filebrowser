@@ -994,7 +994,10 @@ func (idx *Index) processFileItem(file os.FileInfo, indexPath string, opts Optio
 			cached = c
 		}
 	}
-	if cached != nil && cached.Type != "" {
+	// fufu: PSD/PSB names are always typed afresh (an extension check, no file read), so
+	// rows stored before .psb was recognized get the Photoshop type.
+	psdName := iteminfo.IsPSDName(file.Name())
+	if cached != nil && cached.Type != "" && !psdName {
 		itemInfo.Type = cached.Type
 	} else {
 		itemInfo.DetectType(fullCombined, false)
@@ -1008,7 +1011,9 @@ func (idx *Index) processFileItem(file os.FileInfo, indexPath string, opts Optio
 	bubblesUpHasPreview := false
 	if !opts.SkipExtendedAttrs {
 		usedCachedPreview := false
-		if cached != nil {
+		// fufu: a PSD's flag is always recomputed (by type and size, without opening the
+		// file), so PSDs indexed before they could have previews get them.
+		if cached != nil && itemInfo.Type != iteminfo.PSDMimeType {
 			itemInfo.HasPreview = cached.HasPreview
 			usedCachedPreview = true
 		} else if !idx.Config.ResolvedRules.IndexingDisabled && opts.Recursive {
@@ -1611,7 +1616,9 @@ func setFilePreviewFlags(fileInfo *iteminfo.ItemInfo, realPath string) {
 	}
 	switch simpleType {
 	case "image":
-		if fileInfo.Size > iteminfo.LargeFileSizeThreshold {
+		// fufu: PSD previews read only the flattened image (internal/preview/psd.go), so
+		// the file-size limit doesn't apply to them.
+		if fileInfo.Size > iteminfo.LargeFileSizeThreshold && fileInfo.Type != iteminfo.PSDMimeType {
 			fileInfo.HasPreview = false
 			return
 		}

@@ -215,6 +215,7 @@ const (
 	previewTypeVideo
 	previewTypeAudio
 	previewTypeUnsupported
+	previewTypePSD // fufu: psd.go
 )
 
 // determinePreviewType determines what type of preview generation is needed
@@ -233,6 +234,11 @@ func determinePreviewType(file iteminfo.ExtendedFileInfo) filePreviewType {
 	if strings.HasPrefix(file.Type, "image/heic") &&
 		*settings.Config.Integrations.Media.Convert.ImagePreview[settings.HEICImagePreview] {
 		return previewTypeHEIC
+	}
+
+	// fufu: Photoshop files are read by psd.go, not the image library.
+	if IsPSD(file.Type, file.Name) {
+		return previewTypePSD
 	}
 
 	// Check by MIME type prefix
@@ -261,6 +267,9 @@ func (s *Service) generateRawPreview(ctx context.Context, file iteminfo.Extended
 
 	case previewTypeHEIC:
 		return s.generateHEICPreview(ctx, file, previewSize)
+
+	case previewTypePSD:
+		return psdPreview(ctx, file.RealPath, previewSize)
 
 	case previewTypeImage:
 		ext := strings.ToLower(filepath.Ext(file.Name))
@@ -448,8 +457,10 @@ func GeneratePreviewWithMD5(ctx context.Context, file iteminfo.ExtendedFileInfo,
 		}
 	}
 
-	// Enforce file size limit for image preview generation to prevent memory exhaustion
-	if strings.HasPrefix(file.Type, "image") && file.Size > iteminfo.LargeFileSizeThreshold {
+	// Enforce file size limit for image preview generation to prevent memory exhaustion.
+	// fufu: not for PSDs, whose layers make up most of the file; psd.go reads only the
+	// flattened image and limits by pixels.
+	if strings.HasPrefix(file.Type, "image") && previewTypeEarly != previewTypePSD && file.Size > iteminfo.LargeFileSizeThreshold {
 		message := fmt.Sprintf("Image file too large for preview: %s (size: %d bytes, limit: %d bytes)",
 			file.Name, file.Size, iteminfo.LargeFileSizeThreshold)
 		logger.Warning(message)
@@ -496,7 +507,7 @@ func GeneratePreviewWithMD5(ctx context.Context, file iteminfo.ExtendedFileInfo,
 	// When we got bytes from an embedded preview, we still need to resize to small/large/xlarge (original is never converted).
 	// When we got bytes from type-specific path, regular images are already resized; others need resize below.
 	previewType := determinePreviewType(file)
-	if !fromEmbeddedPreview && (previewType == previewTypeImage ||
+	if !fromEmbeddedPreview && (previewType == previewTypeImage || previewType == previewTypePSD ||
 		(previewType == previewTypeDocument && settings.Env.MuPdfAvailable) ||
 		(previewType == previewTypeVideo && settings.Env.FFmpegAvailable)) {
 		if err := service.fileCache.Store(ctx, cacheKey, imageBytes); err != nil {
@@ -701,7 +712,13 @@ func deleteThumbs(ctx context.Context, hash string, video bool) {
 	}
 	sc, canStat := service.fileCache.(statSizer)
 	for pct := 0; pct <= maxPct; pct++ {
-		for _, size := range []string{"small", "large"} {
+		sizes := []string{"small", "large"}
+		if pct == 0 {
+			// fufu: also the viewer sizes, which for PSDs are several MB ("full" exists only
+			// for PSDs). Not per seek percentage: those are video thumbnails only.
+			sizes = append(sizes, "xlarge", "original", "full")
+		}
+		for _, size := range sizes {
 			key := CacheKey(hash, size, pct)
 			if canStat {
 				if _, found, err := sc.StatSize(key); err == nil && !found {

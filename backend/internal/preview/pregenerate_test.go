@@ -87,11 +87,14 @@ func TestPregenerateMatchesBrowsing(t *testing.T) {
 		{"big.jpg", "image/jpeg", encodeJPEG(t, 1600, 1000), true},
 		{"small-file.png", "image/png", encodeAs(t, noisyImage(300, 200, false), "png"), false}, // under 256 KB
 		{"fits-large.png", "image/png", encodeAs(t, noisyImage(600, 400, false), "png"), false}, // within 640×640
+		// fufu: PSDs, from one decode of the flattened image (psd.go), even when small.
+		{"big.psd", iteminfo.PSDMimeType, psdFromImage(noisyImage(1600, 1000, true), true, 0), true},
+		{"small.psd", iteminfo.PSDMimeType, psdFromImage(noisyImage(300, 200, false), false, 0), true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			file := writeImageFile(t, src, c.name, c.mime, c.data)
-			if c.decodeOnce && file.Size < 256*1024 {
+			if c.decodeOnce && file.Size < 256*1024 && file.Type != iteminfo.PSDMimeType {
 				t.Fatalf("test image is %d bytes, must be at least 256 KB to be resized", file.Size)
 			}
 

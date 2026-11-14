@@ -130,6 +130,16 @@ func Pregenerate(ctx context.Context, file iteminfo.ExtendedFileInfo, sizes []st
 // image (generateImagePreview's path), so one decode can serve them all.
 func decodeOnceEligible(file iteminfo.ExtendedFileInfo, sizes []string) bool {
 	const maxSizeForOriginal = 256 * 1024 // generateImagePreview's limit
+	if determinePreviewType(file) == previewTypePSD {
+		// fufu: every thumbnail size of a PSD comes from one decode (psd.go); the viewer
+		// sizes don't.
+		for _, size := range sizes {
+			if size == "original" || size == "full" {
+				return false
+			}
+		}
+		return true
+	}
 	if determinePreviewType(file) != previewTypeImage || hasEmbeddedPreview(file.Type, file.Name) {
 		return false
 	}
@@ -166,6 +176,10 @@ func (s *Service) pregenerateFromOneDecode(ctx context.Context, file iteminfo.Ex
 			return 0, sizes
 		}
 		defer s.releaseImageSem()
+	}
+
+	if determinePreviewType(file) == previewTypePSD {
+		return s.pregeneratePSD(ctx, file, hash, sizes)
 	}
 
 	f, err := os.Open(file.RealPath)
@@ -225,6 +239,42 @@ func (s *Service) pregenerateFromOneDecode(ctx context.Context, file iteminfo.Ex
 			continue
 		}
 		if err := s.fileCache.Store(ctx, CacheKey(hash, size, 0), out); err != nil {
+			rest = append(rest, size)
+			continue
+		}
+		made++
+	}
+	return made, rest
+}
+
+// pregeneratePSD stores each thumbnail size of a PSD from one decode of its flattened image,
+// encoded exactly as psdPreview encodes it for browsing. Sizes it can't make are returned, to
+// be tried (and their failure recorded) through upstream's path.
+func (s *Service) pregeneratePSD(ctx context.Context, file iteminfo.ExtendedFileInfo, hash string, sizes []string) (int, []string) {
+	img, err := decodePSDForThumbnails(ctx, file.RealPath)
+	if err != nil {
+		return 0, sizes
+	}
+	made := 0
+	var rest []string
+	for _, size := range sizes {
+		if ctx.Err() != nil {
+			rest = append(rest, size)
+			continue
+		}
+		opts, err := getPreviewOptions(size)
+		if err != nil {
+			rest = append(rest, size)
+			continue
+		}
+		opts.Format = FormatWebp
+		opts = resizeDefaults(opts)
+		var buf bytes.Buffer
+		if err := encodeDecodedPreview(img, &buf, opts); err != nil || buf.Len() < minPreviewSize {
+			rest = append(rest, size)
+			continue
+		}
+		if err := s.fileCache.Store(ctx, CacheKey(hash, size, 0), buf.Bytes()); err != nil {
 			rest = append(rest, size)
 			continue
 		}

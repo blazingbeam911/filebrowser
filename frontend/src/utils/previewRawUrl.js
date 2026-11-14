@@ -29,16 +29,30 @@ export function isPdfConvertable(name) {
   return PDF_CONVERTABLE_EXTENSIONS.has(ext);
 }
 
+/** Type FileBrowser gives Photoshop files (.psd, .psb). */
+export const PSD_MIME_TYPE = "image/vnd.adobe.photoshop";
+const PSD_NAME = /\.ps[db]$/i;
+
+/**
+ * True for Photoshop files (fufu). No browser can show them; the server makes a WebP of the
+ * file's flattened image (backend internal/preview/psd.go).
+ */
+export function isPsd(item) {
+  if (!item) return false;
+  return item.type === PSD_MIME_TYPE || PSD_NAME.test(item.name || "");
+}
+
 export function isHeicOrHeif(type) {
   return type === "image/heic" || type === "image/heif";
 }
 
 /**
  * True when the image comes from a server-side conversion (RAW, HEIC/HEIF converted for
- * non-Safari browsers, MuPDF documents) rather than the file's own bytes.
+ * non-Safari browsers, MuPDF documents, PSD) rather than the file's own bytes.
  */
 export function isServerConvertedImage(item) {
   if (!item) return false;
+  if (isPsd(item)) return true;
   if (state.isSafari && isHeicOrHeif(item.type)) {
     return false;
   }
@@ -65,6 +79,19 @@ export function previewRawUrl(item) {
     return `${resourcesApi.getPreviewURL(item.source, item.path, item.modified)}&size=original`;
   }
   return resourcesApi.getViewURL(item.source, item.path, viewToken, share, false, typeHint);
+}
+
+/**
+ * URL of a PSD's full-size image (`size=full`, PSD only): the viewer first shows `original`,
+ * which the server caps at 4096 px, and swaps this in on request.
+ * @param {{ source?: string, path: string, modified?: string, viewToken?: string }} item
+ * @returns {string}
+ */
+export function psdFullUrl(item) {
+  if (getters.isShare()) {
+    return resourcesApi.getPreviewURLPublic(removeTrailingSlash(item.path), "full", item.viewToken);
+  }
+  return `${resourcesApi.getPreviewURL(item.source, item.path, item.modified)}&size=full`;
 }
 
 /**

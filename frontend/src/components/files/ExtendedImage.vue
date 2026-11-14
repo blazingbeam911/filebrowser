@@ -46,7 +46,8 @@ import { getBestCachedImage } from "@/utils/imageCache";
 import { imageHold, reportShown } from "@/utils/imageHold.js";
 import { isImagePreloaded, pauseImagePreloads, resumeImagePreloads } from "@/utils/imagePreloader.js";
 import { getTypeInfo, isRawImageMimeType } from "@/utils/mimetype";
-import { largeThumbnailUrl } from "@/utils/previewRawUrl.js";
+import { isPsd, largeThumbnailUrl, psdFullUrl } from "@/utils/previewRawUrl.js";
+import { finishPsdFullSize, notePsdCappedImage, psdFullSize, resetPsdFullSize } from "@/utils/psdFullSize.js";
 import { refreshViewToken, requestViewIdentity } from "@/api/viewToken.js";
 import throttle from "@/utils/throttle";
 
@@ -147,9 +148,15 @@ export default {
       zoomMouseMoved: false,
       zoomMouseStartX: 0,
       zoomMouseStartY: 0,
+      /** A PSD's full-size image is being put in place of its capped one (psdFullSize.js). */
+      swappingFull: false,
     };
   },
   computed: {
+    /** Presses of the PSD full-size button (psdFullSize.js). */
+    psdFullRequests() {
+      return psdFullSize.requests;
+    },
     source() {
       return state.req?.source;
     },
@@ -253,6 +260,7 @@ export default {
   },
   beforeUnmount() {
     this.loadGeneration++;
+    resetPsdFullSize();
     this.deferredFull = null;
     this.clearPlaceholderTimer();
     pauseImagePreloads();
@@ -323,6 +331,8 @@ export default {
       const generation = ++this.loadGeneration;
       this.clearPlaceholderTimer();
       this.deferredFull = null;
+      this.swappingFull = false;
+      resetPsdFullSize(isPsd(state.req) ? this.src : null);
       reportShown(this.src, "none");
 
       // Set src directly via JavaScript to avoid Vue's HTML entity encoding in template bindings
@@ -440,6 +450,13 @@ export default {
       this.applyImgTransform();
     },
     onLoad() {
+      if (this.swappingFull) {
+        // A PSD's full-size image replaced its capped one in the same <img>. Both fill the
+        // same box on screen, so zoom and position stay as they are (no setCenter).
+        this.swappingFull = false;
+        finishPsdFullSize(this.src, true);
+        return;
+      }
       // Real image loaded: drop the placeholder and show the image
       this.clearPlaceholderTimer();
       this.placeholderSrc = null;
@@ -454,6 +471,10 @@ export default {
       }
       mutations.setLoading("preview-img", false);
       reportShown(this.src, "full");
+      const shown = this.$refs.imgex;
+      if (isPsd(state.req) && shown?.naturalWidth) {
+        notePsdCappedImage(this.src, shown.naturalWidth, shown.naturalHeight);
+      }
       // fullImageLoaded flips display from none → block via :style. Vue hasn't
       // updated the DOM yet, so setCenter() in the same tick sees clientWidth/Height 0.
       // Defer until after layout so centering / transform apply correctly.
@@ -462,6 +483,15 @@ export default {
     onImageError(event) {
       const img = event.target;
       const actualSrc = img?.src || '';
+
+      if (this.swappingFull) {
+        // The full-size image decoded off-screen but failed in place: back to the capped one.
+        this.swappingFull = false;
+        finishPsdFullSize(this.src, false);
+        notify.showError(this.$t("general.fullSizeFailed"));
+        if (img) img.src = String(this.src).replace(/&amp;/g, '&');
+        return;
+      }
 
       // If the error is due to &amp; in URL, try to fix it
       if (actualSrc?.includes('&amp;')) {
@@ -497,6 +527,8 @@ export default {
       this.finishImageError(img);
     },
     finishImageError(img) {
+      // The viewer (Preview.vue) replaces a PSD that can't be shown with "No preview".
+      this.$emit("image-failed", this.src);
       this.clearPlaceholderTimer();
       this.placeholderSrc = null;
       this.applyPendingViewReset();
@@ -510,6 +542,23 @@ export default {
         img.style.display = 'block';
       }
       this.scheduleSetCenter();
+    },
+    /** Swaps a PSD's full-size image in for its capped one (top bar button, psdFullSize.js). */
+    async loadPsdFull() {
+      if (!psdFullSize.loading || psdFullSize.src !== this.src) return;
+      const src = this.src;
+      const generation = this.loadGeneration;
+      const url = psdFullUrl(state.req);
+      const ok = await decodeOffscreen(url);
+      if (generation !== this.loadGeneration || src !== this.src) return; // moved on meanwhile
+      const img = this.$refs.imgex;
+      if (!ok || !img) {
+        finishPsdFullSize(src, false);
+        notify.showError(this.$t("general.fullSizeFailed"));
+        return;
+      }
+      this.swappingFull = true;
+      img.src = url;
     },
     checkIfTiff(src) {
       const sufs = ["tif", "tiff", "dng", "cr2", "nef"];
@@ -1025,6 +1074,9 @@ export default {
     },
   },
   watch: {
+    psdFullRequests() {
+      void this.loadPsdFull();
+    },
     holdFast(fast) {
       if (!fast) {
         // Fast hold over: the image it stopped on loads in full.

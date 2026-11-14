@@ -730,6 +730,8 @@
   },
   "general": {
     "fullscreen": "Fullscreen",
+    "fullSize": "Full size",
+    "fullSizeFailed": "The full-size image could not be loaded.",
     "import": "匯入",
     "export": "匯出",
     "name": "名稱{suffix}",

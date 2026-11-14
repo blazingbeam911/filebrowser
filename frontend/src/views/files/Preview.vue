@@ -12,7 +12,8 @@
       'transitioning': isTransitioning && !showImage
     }" v-if="!isDeleted">
       <ExtendedImage v-if="showImage" :src="raw" @navigate-previous="navigatePrevious"
-        @navigate-next="navigateNext" @close-preview="exitPreviewFromImageGesture" />
+        @navigate-next="navigateNext" @close-preview="exitPreviewFromImageGesture"
+        @image-failed="onImageFailed" />
 
       <!-- Media: load full metadata + album art from media API before mounting plyr so the correct view/art is stable. -->
       <div v-else-if="previewType === 'audio' || previewType === 'video'" class="av-preview-wrap">
@@ -93,7 +94,7 @@ import { goToItem, removeLastDir } from "@/utils/url.js";
 import LoadingSpinner from "@/components/LoadingSpinner.vue";
 import { state, getters, mutations } from "@/store";
 import { isRawImageMimeType } from "@/utils/mimetype";
-import { isPdfConvertable, previewRawUrl } from "@/utils/previewRawUrl.js";
+import { isPdfConvertable, isPsd, previewRawUrl } from "@/utils/previewRawUrl.js";
 import { convertToVTT, getSubtitleFormatExtension } from "@/utils/subtitles";
 import { parseLyrics } from "@/utils/lyrics";
 import { globalVars } from "@/utils/constants";
@@ -147,6 +148,8 @@ export default {
       listingKey: null,
       /** User pressed play; enables autoplay for queue navigation even when autoplayMedia pref is off. */
       playbackStarted: false,
+      /** fufu: "source:path" of a PSD the server couldn't convert; it shows "No preview". */
+      psdFailedKey: null,
     };
   },
   computed: {
@@ -154,6 +157,12 @@ export default {
       return getters.sourcePermissions();
     },
     showImage() {
+      // fufu: a PSD is shown from the server's conversion, so only when it has one and the
+      // conversion hasn't failed (a damaged file); otherwise "No preview" with Download.
+      if (isPsd(state.req)) {
+        return this.previewType === 'image' && state.req.hasPreview !== false &&
+          this.psdFailedKey !== `${state.req.source}:${state.req.path}`;
+      }
       if (state.req.type === "image/heic" || state.req.type === "image/heif") {
         return this.isHeicAndViewable;
       }
@@ -261,6 +270,12 @@ export default {
     mutations.clearNavigation();
   },
   methods: {
+    /** ExtendedImage couldn't show the image. For a PSD, fall back to "No preview". */
+    onImageFailed() {
+      if (isPsd(state.req)) {
+        this.psdFailedKey = `${state.req.source}:${state.req.path}`;
+      }
+    },
     async attachDirMediaMetadata(listing, dirPath) {
       if (!listing?.length) return;
       try {

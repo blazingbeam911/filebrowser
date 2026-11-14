@@ -623,6 +623,8 @@
   },
   "general": {
     "fullscreen": "Fullscreen",
+    "fullSize": "Full size",
+    "fullSizeFailed": "The full-size image could not be loaded.",
     "import": "가져오기",
     "export": "내보내기",
     "name": "이름",

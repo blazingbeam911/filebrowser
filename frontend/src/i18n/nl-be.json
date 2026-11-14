@@ -730,6 +730,8 @@
   },
   "general": {
     "fullscreen": "Fullscreen",
+    "fullSize": "Full size",
+    "fullSizeFailed": "The full-size image could not be loaded.",
     "import": "Importeren",
     "export": "Exporteren",
     "name": "Naam",

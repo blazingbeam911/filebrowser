@@ -13,6 +13,16 @@ const (
 	LargeFileSizeThreshold = 75 * 1024 * 1024 // 75MB
 )
 
+// PSDMimeType is the type of .psd and .psb files (fufu: their previews are made by
+// internal/preview/psd.go, which exempts them from LargeFileSizeThreshold).
+const PSDMimeType = "image/vnd.adobe.photoshop"
+
+// IsPSDName reports whether name has a Photoshop extension (.psd, .psb).
+func IsPSDName(name string) bool {
+	ext := strings.ToLower(filepath.Ext(name))
+	return ext == ".psd" || ext == ".psb"
+}
+
 var AllFiletypeOptions = []string{
 	"image",
 	"audio",
@@ -447,6 +457,9 @@ func (i *ItemInfo) DetectType(realPath string, saveContent bool) {
 		return
 	case ".heic", ".heif":
 		i.Type = "image/heic"
+		return
+	case ".psd", ".psb": // fufu: not in every system's MIME table (.psb rarely is)
+		i.Type = PSDMimeType
 		return
 	case ".kmz":
 		i.Type = "application/vnd.google-earth.kmz"

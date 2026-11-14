@@ -26,7 +26,25 @@
       aria-hidden="true"
       tabindex="-1"
     />
+    <!-- fufu: and the PSD full-size button, while it shows -->
+    <action
+      v-if="psdFullSizeShown"
+      class="menu-button image-fullscreen-balance"
+      icon="high_res"
+      aria-hidden="true"
+      tabindex="-1"
+    />
     <title v-if="!showSearch" class="topTitle">{{ getTopTitle }}</title>
+    <!-- fufu: a PSD's full-size image instead of the 4096 px one (utils/psdFullSize.js) -->
+    <action
+      v-if="psdFullSizeShown"
+      class="menu-button psd-full-size-button"
+      :icon="psdFullSizeLoading ? 'progress_activity' : 'high_res'"
+      :customIconClass="psdFullSizeLoading ? 'material-symbols psd-full-size-spin' : ''"
+      :label="$t('general.fullSize')"
+      :isDisabled="psdFullSizeLoading"
+      @action="requestPsdFullSize"
+    />
     <action
       v-if="imageFullscreenAvailable"
       class="menu-button image-fullscreen-button"
@@ -60,6 +78,7 @@ import Action from "@/components/Action.vue";
 import { globalVars } from "@/utils/constants";
 import { url } from "@/utils";
 import { pageFullscreen, togglePageFullscreen } from "@/utils/pageFullscreen.js";
+import { psdFullSize, psdFullSizeOffered, requestPsdFullSize } from "@/utils/psdFullSize.js";
 
 export default {
   name: "UnifiedHeader",
@@ -74,6 +93,12 @@ export default {
   computed: {
     imageFullscreenAvailable() {
       return pageFullscreen.imageShowing;
+    },
+    psdFullSizeShown() {
+      return pageFullscreen.imageShowing && psdFullSizeOffered();
+    },
+    psdFullSizeLoading() {
+      return psdFullSize.loading;
     },
     getTopTitle() {
       if (getters.isSettings()) {
@@ -171,6 +196,7 @@ export default {
   },
   methods: {
     togglePageFullscreen,
+    requestPsdFullSize,
     openSearch() {
       if (!state.isSearchActive) {
         mutations.closeHovers();
@@ -316,6 +342,16 @@ header {
 .image-fullscreen-balance {
   visibility: hidden;
   pointer-events: none;
+}
+
+:deep(.psd-full-size-spin) {
+  animation: psd-full-size-spin 1s linear infinite;
+}
+
+@keyframes psd-full-size-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 :deep(.action.nav-toggle-button .line),
